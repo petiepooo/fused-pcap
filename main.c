@@ -26,9 +26,10 @@ static const char *fusedPcapVersion = "0.0.1a";
 //#include <sys/xattr.h>
 #include <sys/stat.h>
 //#include <sys/statvfs.h>
-#include <unistd.h>
-#include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <stddef.h>
+#include <stdio.h>
 #include <fcntl.h>
 #include <string.h>
 //#include <strings.h>
@@ -36,6 +37,14 @@ static const char *fusedPcapVersion = "0.0.1a";
 //#include <assert.h>
 //#include <dirent.h>
 #include <fuse.h>
+
+// DEFAULT VALUES
+
+// default slack between slowest and fastest cluster member in blocks
+#define DEFAULT_BLOCK_SLACK 256
+
+// default pcap filesize is two exabytes
+#define DEFAULT_PCAP_FILESIZE 1024LL * 1024 * 1024 * 1024 * 1024 * 1024 * 2
 
 // GLOBAL VARIABLES
 
@@ -295,17 +304,42 @@ static void usage(const char *progname)
 "Usage: %s pcapdirpath mountpoint [-h | -v | -o opt1[,opt2]...]\n"
 "\n"
 "options:\n"
-"  clustersize=X - block reads until X processes have connected to and read from the same file (default 1)\n"
-"  blockslack=X - number of blocks to allow between leading and lagging reads in a cluster (default TBD)\n"
 "  filesize=X - size of file returned in fstat() call, K, M, G, T, and P suffixes allowed (default 512T)\n"
-"  clusterabend=X - how to handle premature closure of cluster member's read handle (0=err, 1=eof, 2=ignore) (default=0)\n"
+"  clustersize=X - block reads until X processes have connected to and read from the same file (default 1)\n"
 "  clustermode=X - how to distribute packets between cluster members (0=vlan+ip+port, 1=vlan, 2=ip, 3=vlan+ip, 4=ip+port) (default=0)\n"
+"  clusterabend=X - how to handle premature closure of cluster member's read handle (0=err, 1=eof, 2=ignore) (default=0)\n"
+"  blockslack=X - number of blocks to allow between leading and lagging reads in a cluster (default TBD)\n"
 "\n", progname);
 }
 
 enum {
-  MY_FUSE_OPT_KEY_HELP,
-  MY_FUSE_OPT_KEY_VERSION
+  FUSED_PCAP_OPT_KEY_HELP,
+  FUSED_PCAP_OPT_KEY_VERSION,
+};
+
+struct fusedPcapConfig_s {
+  off_t pcapfilesize;
+  char *filesize;
+  int clustersize;
+  int clustermode;
+  int clusterabend;
+  int blockslack;
+} fusedPcapConfig;
+
+#define FUSED_PCAP_OPT(t, p, v) { t, offsetof(struct fusedPcapConfig_s, p), v }
+
+static struct fuse_opt fusedPcapOptions[] = {
+  FUSED_PCAP_OPT("filesize=%s",     filesize,     0),
+  FUSED_PCAP_OPT("clustersize=%i",  clustersize,  0),
+  FUSED_PCAP_OPT("clustermode=%i",  clustermode,  0),
+  FUSED_PCAP_OPT("clusterabend=%i", clusterabend, 0),
+  FUSED_PCAP_OPT("blockslack=%i",   blockslack,   0),
+
+  FUSE_OPT_KEY("-h",        FUSED_PCAP_OPT_KEY_HELP),
+  FUSE_OPT_KEY("--help",    FUSED_PCAP_OPT_KEY_HELP),
+  FUSE_OPT_KEY("-v",        FUSED_PCAP_OPT_KEY_VERSION),
+  FUSE_OPT_KEY("--version", FUSED_PCAP_OPT_KEY_VERSION),
+  FUSE_OPT_END
 };
 
 static int parseMountOptions(void *data, const char *arg, int key, struct fuse_args *arguments)
@@ -318,12 +352,12 @@ static int parseMountOptions(void *data, const char *arg, int key, struct fuse_a
     }
     break;
   case FUSE_OPT_KEY_OPT:
-    //TODO: handle my options here
+    fprintf(stdout, "FUSE_OPT_KEY_OPT: %s", arg);
     break;
-  case MY_FUSE_OPT_KEY_HELP:
+  case FUSED_PCAP_OPT_KEY_HELP:
     usage(arguments->argv[0]);
     exit(0);
-  case MY_FUSE_OPT_KEY_VERSION:
+  case FUSED_PCAP_OPT_KEY_VERSION:
     fprintf(stdout, "fused_pcap version %s\n", fusedPcapVersion);
     exit(0);
   default:
@@ -333,22 +367,81 @@ static int parseMountOptions(void *data, const char *arg, int key, struct fuse_a
   return 1;
 }
 
-static struct fuse_opt fusedPcapOptions[] = {
-  FUSE_OPT_KEY("-h",        MY_FUSE_OPT_KEY_HELP),
-  FUSE_OPT_KEY("--help",    MY_FUSE_OPT_KEY_HELP),
-  FUSE_OPT_KEY("-v",        MY_FUSE_OPT_KEY_VERSION),
-  FUSE_OPT_KEY("--version", MY_FUSE_OPT_KEY_VERSION),
-  FUSE_OPT_END
-};
-
 int main (int argc, char *argv[])
 {
   struct fuse_args fuseArgs = FUSE_ARGS_INIT(argc, argv);
+  off_t multiplier;
 
-  if ((fuse_opt_parse(&fuseArgs, &pcapDirectory, fusedPcapOptions, parseMountOptions)) != 0) {
+//fprintf(stderr, "pcapfilesize=%lld\nfilesize=%s\nclustersize=%d\nclustermode=%d\nclusterabend=%d\nblockslack=%d\n", (long long int) fusedPcapConfig.pcapfilesize, fusedPcapConfig.filesize, fusedPcapConfig.clustersize, fusedPcapConfig.clustermode, fusedPcapConfig.clusterabend, fusedPcapConfig.blockslack);
+
+  if ((fuse_opt_parse(&fuseArgs, &fusedPcapConfig, fusedPcapOptions, parseMountOptions)) == -1) {
     fprintf(stderr, "%s: invalid arguments\n", argv[0]);
     exit(1);
   }
+
+  if (fusedPcapConfig.filesize == NULL)
+    fusedPcapConfig.pcapfilesize = DEFAULT_PCAP_FILESIZE;
+  else {
+    multiplier = 1;
+    switch (fusedPcapConfig.filesize[strlen(fusedPcapConfig.filesize) - 1]) {
+    case 'K':
+    case 'k':
+      multiplier = 1024ll;
+      break;
+    case 'M':
+    case 'm':
+      multiplier = 1024ll * 1024;
+      break;
+    case 'G':
+    case 'g':
+      multiplier = 1024ll * 1024 * 1024;
+      break;
+    case 'T':
+    case 't':
+      multiplier = 1024ll * 1024 * 1024 * 1024;
+      break;
+    case 'P':
+    case 'p':
+      multiplier = 1024ll * 1024 * 1024 * 1024 * 1024;
+      break;
+    default:
+      break;
+    }
+//fprintf(stderr, " multiplier=%lld\n filesize=%s\n", (long long int) multiplier, fusedPcapConfig.filesize);
+    if (multiplier > 1)
+      fusedPcapConfig.filesize[strlen(fusedPcapConfig.filesize) - 1] = '\0';
+    fusedPcapConfig.pcapfilesize = atoll(fusedPcapConfig.filesize) * multiplier;
+    if (fusedPcapConfig.pcapfilesize < multiplier) {
+      fprintf(stderr, "%s: filesize option out of range (1..2^63-1)\n", argv[0]);
+      if (fusedPcapConfig.pcapfilesize != 0 && fusedPcapConfig.filesize[0] != '-')
+        fprintf(stderr, "Congratulations! you overflowed a 64-bit integer.\n");
+      exit(1);
+    }
+  }
+  
+//fprintf(stderr, "pcapfilesize=%lld\nfilesize=%s\nclustersize=%d\nclustermode=%d\nclusterabend=%d\nblockslack=%d\n", (long long int) fusedPcapConfig.pcapfilesize, fusedPcapConfig.filesize, fusedPcapConfig.clustersize, fusedPcapConfig.clustermode, fusedPcapConfig.clusterabend, fusedPcapConfig.blockslack);
+  //validate given options
+  if (fusedPcapConfig.clustersize == 0)
+    fusedPcapConfig.clustersize = 1;
+  else if (fusedPcapConfig.clustersize < 0 || fusedPcapConfig.clustersize > 32) {
+    fprintf(stderr, "%s: clustersize option out of range (1..32)\n", argv[0]);
+    exit(1);
+  }
+  if (fusedPcapConfig.clustermode < 0 || fusedPcapConfig.clustermode > 4) {
+    fprintf(stderr, "%s: clustermode option out of range (0..4)\n", argv[0]);
+    exit(1);
+  }
+  if (fusedPcapConfig.clusterabend < 0 || fusedPcapConfig.clusterabend > 2) {
+    fprintf(stderr, "%s: clusterabend option out of range (0..2)\n", argv[0]);
+    exit(1);
+  }
+  if (fusedPcapConfig.blockslack == 0)
+    fusedPcapConfig.blockslack = DEFAULT_BLOCK_SLACK;
+  else if (fusedPcapConfig.blockslack < 1 || fusedPcapConfig.blockslack > 1024) {
+    fprintf(stderr, "%s: blockslack option out of range (1..1024)\n", argv[0]);
+    exit(1);
+  }
+//fprintf(stderr, "pcapfilesize=%lld\nfilesize=%s\nclustersize=%d\nclustermode=%d\nclusterabend=%d\nblockslack=%d\n", (long long int) fusedPcapConfig.pcapfilesize, fusedPcapConfig.filesize, fusedPcapConfig.clustersize, fusedPcapConfig.clustermode, fusedPcapConfig.clusterabend, fusedPcapConfig.blockslack);
 
   if (pcapDirectory == NULL) {
     fprintf(stderr, "%s: missing pcap source directory\n", argv[0]);
