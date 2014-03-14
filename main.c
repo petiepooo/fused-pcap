@@ -79,7 +79,7 @@ char *pcapDirectory;
 
 // FUSE CALLBACKS
 
-static int callback_getattr(const char *path, struct stat *stData)
+static int fused_pcap_getattr(const char *path, struct stat *stData)
 {
   //TODO: finish
   (void)path;
@@ -87,7 +87,7 @@ static int callback_getattr(const char *path, struct stat *stData)
   return -EROFS;
 }
 
-static int callback_readlink(const char *path, char *buffer, size_t size)
+static int fused_pcap_readlink(const char *path, char *buffer, size_t size)
 {
   //TODO: finish
   (void)path;
@@ -96,7 +96,7 @@ static int callback_readlink(const char *path, char *buffer, size_t size)
   return -EROFS;
 }
 
-static int callback_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fillInfo)
+static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fillInfo)
 {
   //TODO: finish
   (void)path;
@@ -107,7 +107,7 @@ static int callback_readdir(const char *path, void *buffer, fuse_fill_dir_t fill
   return -EROFS;
 }
 
-static int callback_mknod(const char *path, mode_t mode, dev_t rdev)
+static int fused_pcap_mknod(const char *path, mode_t mode, dev_t rdev)
 {
   //TODO: finish
   (void)path;
@@ -116,7 +116,7 @@ static int callback_mknod(const char *path, mode_t mode, dev_t rdev)
   return -EROFS;
 }
 
-static int callback_mkdir(const char *path, mode_t mode)
+static int fused_pcap_mkdir(const char *path, mode_t mode)
 {
   //TODO: finish
   (void)path;
@@ -124,21 +124,21 @@ static int callback_mkdir(const char *path, mode_t mode)
   return -EROFS;
 }
 
-static int callback_unlink(const char *path)
+static int fused_pcap_unlink(const char *path)
 {
   //TODO: finish
   (void)path;
   return -EROFS;
 }
 
-static int callback_rmdir(const char *path)
+static int fused_pcap_rmdir(const char *path)
 {
   //TODO: finish
   (void)path;
   return -EROFS;
 }
 
-static int callback_symlink(const char *from, const char *to)
+static int fused_pcap_symlink(const char *from, const char *to)
 {
   //TODO: finish
   (void)from;
@@ -146,7 +146,7 @@ static int callback_symlink(const char *from, const char *to)
   return -EROFS;
 }
 
-static int callback_rename(const char *from, const char *to)
+static int fused_pcap_rename(const char *from, const char *to)
 {
   //TODO: finish
   (void)from;
@@ -154,7 +154,7 @@ static int callback_rename(const char *from, const char *to)
   return -EROFS;
 }
 
-static int callback_link(const char *from, const char *to)
+static int fused_pcap_link(const char *from, const char *to)
 {
   //TODO: finish
   (void)from;
@@ -162,7 +162,7 @@ static int callback_link(const char *from, const char *to)
   return -EROFS;
 }
 
-static int callback_chmod(const char *path, mode_t mode)
+static int fused_pcap_chmod(const char *path, mode_t mode)
 {
   //TODO: finish
   (void)path;
@@ -170,7 +170,7 @@ static int callback_chmod(const char *path, mode_t mode)
   return -EROFS;
 }
 
-static int callback_chown(const char *path, uid_t uid, gid_t gid)
+static int fused_pcap_chown(const char *path, uid_t uid, gid_t gid)
 {
   //TODO: finish
   (void)path;
@@ -179,7 +179,7 @@ static int callback_chown(const char *path, uid_t uid, gid_t gid)
   return -EROFS;
 }
 
-static int callback_truncate(const char *path, off_t size)
+static int fused_pcap_truncate(const char *path, off_t size)
 {
   //TODO: finish
   (void)path;
@@ -187,7 +187,7 @@ static int callback_truncate(const char *path, off_t size)
   return -EROFS;
 }
 
-static int callback_utime(const char *path, struct utimbuf *timeBuffer)
+static int fused_pcap_utime(const char *path, struct utimbuf *timeBuffer)
 {
   //TODO: finish
   (void)path;
@@ -195,7 +195,7 @@ static int callback_utime(const char *path, struct utimbuf *timeBuffer)
   return -EROFS;
 }
 
-static int callback_open(const char *path, struct fuse_file_info *fileInfo)
+static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
 {
   //TODO: finish
   (void)path;
@@ -203,18 +203,7 @@ static int callback_open(const char *path, struct fuse_file_info *fileInfo)
   return -EROFS;
 }
 
-static int callback_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fileInfo)
-{
-  //TODO: finish
-  (void)path;
-  (void)buffer;
-  (void)size;
-  (void)offset;
-  (void)fileInfo;
-  return -EROFS;
-}
-
-static int callback_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fileInfo)
+static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fileInfo)
 {
   //TODO: finish
   (void)path;
@@ -225,7 +214,18 @@ static int callback_write(const char *path, const char *buffer, size_t size, off
   return -EROFS;
 }
 
-static int callback_statfs(const char *path, struct statvfs *status)
+static int fused_pcap_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fileInfo)
+{
+  //TODO: finish
+  (void)path;
+  (void)buffer;
+  (void)size;
+  (void)offset;
+  (void)fileInfo;
+  return -EROFS;
+}
+
+static int fused_pcap_statfs(const char *path, struct statvfs *status)
 {
   //TODO: finish
   (void)path;
@@ -233,7 +233,7 @@ static int callback_statfs(const char *path, struct statvfs *status)
   return -EROFS;
 }
 
-static int callback_release(const char *path, struct fuse_file_info *fileInfo)
+static int fused_pcap_release(const char *path, struct fuse_file_info *fileInfo)
 {
   //TODO: finish
   (void)path;
@@ -241,7 +241,7 @@ static int callback_release(const char *path, struct fuse_file_info *fileInfo)
   return -EROFS;
 }
 
-static int callback_fsync(const char *path, int dummy, struct fuse_file_info *fileInfo)
+static int fused_pcap_fsync(const char *path, int dummy, struct fuse_file_info *fileInfo)
 {
   //TODO: finish
   (void)path;
@@ -250,7 +250,7 @@ static int callback_fsync(const char *path, int dummy, struct fuse_file_info *fi
   return -EROFS;
 }
 
-static int callback_access(const char *path, int mode)
+static int fused_pcap_access(const char *path, int mode)
 {
   //TODO: finish
   (void)path;
@@ -258,7 +258,7 @@ static int callback_access(const char *path, int mode)
   return -EROFS;
 }
 
-static int callback_setxattr(const char *path, const char *name, const char *value, size_t size, int flags)
+static int fused_pcap_setxattr(const char *path, const char *name, const char *value, size_t size, int flags)
 {
   //TODO: finish
   (void)path;
@@ -268,7 +268,7 @@ static int callback_setxattr(const char *path, const char *name, const char *val
   return -EROFS;
 }
 
-static int callback_getxattr(const char *path, const char *name, char *value, size_t size)
+static int fused_pcap_getxattr(const char *path, const char *name, char *value, size_t size)
 {
   //TODO: finish
   (void)path;
@@ -278,7 +278,7 @@ static int callback_getxattr(const char *path, const char *name, char *value, si
   return -EROFS;
 }
 
-static int callback_listxattr(const char *path, char *list, size_t size)
+static int fused_pcap_listxattr(const char *path, char *list, size_t size)
 {
   //TODO: finish
   (void)path;
@@ -287,7 +287,7 @@ static int callback_listxattr(const char *path, char *list, size_t size)
   return -EROFS;
 }
 
-static int callback_removexattr(const char *path, const char *name)
+static int fused_pcap_removexattr(const char *path, const char *name)
 {
   //TODO: finish
   (void)path;
@@ -297,31 +297,31 @@ static int callback_removexattr(const char *path, const char *name)
 
 
 struct fuse_operations callbackOperations = {
-  .getattr     = callback_getattr,
-  .readlink    = callback_readlink,
-  .readdir     = callback_readdir,
-  .mknod       = callback_mknod,
-  .mkdir       = callback_mkdir,
-  .symlink     = callback_symlink,
-  .rename      = callback_rename,
-  .unlink      = callback_unlink,
-  .rmdir       = callback_rmdir,
-  .link        = callback_link,
-  .chmod       = callback_chmod,
-  .chown       = callback_chown,
-  .truncate    = callback_truncate,
-  .utime       = callback_utime,
-  .open        = callback_open,
-  .read        = callback_read,
-  .write       = callback_write,
-  .statfs      = callback_statfs,
-  .release     = callback_release,
-  .fsync       = callback_fsync,
-  .access      = callback_access,
-  .setxattr    = callback_setxattr,
-  .getxattr    = callback_getxattr,
-  .listxattr   = callback_listxattr,
-  .removexattr = callback_removexattr
+  .getattr     = fused_pcap_getattr,
+  .readlink    = fused_pcap_readlink,
+  .readdir     = fused_pcap_readdir,
+  .mknod       = fused_pcap_mknod,
+  .mkdir       = fused_pcap_mkdir,
+  .symlink     = fused_pcap_symlink,
+  .rename      = fused_pcap_rename,
+  .unlink      = fused_pcap_unlink,
+  .rmdir       = fused_pcap_rmdir,
+  .link        = fused_pcap_link,
+  .chmod       = fused_pcap_chmod,
+  .chown       = fused_pcap_chown,
+  .truncate    = fused_pcap_truncate,
+  .utime       = fused_pcap_utime,
+  .open        = fused_pcap_open,
+  .read        = fused_pcap_read,
+  .write       = fused_pcap_write,
+  .statfs      = fused_pcap_statfs,
+  .release     = fused_pcap_release,
+  .fsync       = fused_pcap_fsync,
+  .access      = fused_pcap_access,
+  .setxattr    = fused_pcap_setxattr,
+  .getxattr    = fused_pcap_getxattr,
+  .listxattr   = fused_pcap_listxattr,
+  .removexattr = fused_pcap_removexattr
 };
 
 static void usage(const char *progname)
