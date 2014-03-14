@@ -38,13 +38,39 @@ static const char *fusedPcapVersion = "0.0.1a";
 //#include <dirent.h>
 #include <fuse.h>
 
-// DEFAULT VALUES
+// DEFAULT VALUES AND CONSTRAINTS
 
-// default slack between slowest and fastest cluster member in blocks
+// range and default slack between slowest and fastest cluster member in blocks
 #define DEFAULT_BLOCK_SLACK 256
+#define MIN_BLOCK_SLACK 1
+#define MAX_BLOCK_SLACK 1024
+
+// MAX members in a cluster
+#define MAX_CLUSTER_SIZE 32
 
 // default pcap filesize is two exabytes
 #define DEFAULT_PCAP_FILESIZE 1024LL * 1024 * 1024 * 1024 * 1024 * 1024 * 2
+// minimum is 1, maximum is however much an "off_t" type can hold
+
+// enumerated and default cluster modes
+enum {
+  CLUSTER_MODE_VLAN_IP_PORT,
+  CLUSTER_MODE_VLAN,
+  CLUSTER_MODE_IP,
+  CLUSTER_MODE_VLAN_IP,
+  CLUSTER_MODE_IP_PORT
+};
+#define DEFAULT_CLUSTER_MODE CLUSTER_MODE_VLAN_IP_PORT
+
+// enumerated and default cluster abnormal end behaviors
+enum {
+  CLUSTER_ABEND_EOF_ALL_AT_EOF,
+  CLUSTER_ABEND_ERR_ALL_AT_EOF,
+  CLUSTER_ABEND_IMMEDIATE_EOF_ALL,
+  CLUSTER_ABEND_IMMEDIATE_ERROR_ALL,
+  CLUSTER_ABEND_IGNORE
+};
+#define DEFAULT_CLUSTER_ABEND CLUSTER_ABEND_EOF_ALL_AT_EOF
 
 // GLOBAL VARIABLES
 
@@ -379,6 +405,7 @@ int main (int argc, char *argv[])
     exit(1);
   }
 
+  // convert and validate filesize option
   if (fusedPcapConfig.filesize == NULL)
     fusedPcapConfig.pcapfilesize = DEFAULT_PCAP_FILESIZE;
   else {
@@ -420,25 +447,25 @@ int main (int argc, char *argv[])
   }
   
 //fprintf(stderr, "pcapfilesize=%lld\nfilesize=%s\nclustersize=%d\nclustermode=%d\nclusterabend=%d\nblockslack=%d\n", (long long int) fusedPcapConfig.pcapfilesize, fusedPcapConfig.filesize, fusedPcapConfig.clustersize, fusedPcapConfig.clustermode, fusedPcapConfig.clusterabend, fusedPcapConfig.blockslack);
-  //validate given options
+  // validate all other options
   if (fusedPcapConfig.clustersize == 0)
     fusedPcapConfig.clustersize = 1;
   else if (fusedPcapConfig.clustersize < 0 || fusedPcapConfig.clustersize > 32) {
-    fprintf(stderr, "%s: clustersize option out of range (1..32)\n", argv[0]);
+    fprintf(stderr, "%s: clustersize option out of range (1..%d)\n", argv[0], MAX_CLUSTER_SIZE);
     exit(1);
   }
-  if (fusedPcapConfig.clustermode < 0 || fusedPcapConfig.clustermode > 4) {
-    fprintf(stderr, "%s: clustermode option out of range (0..4)\n", argv[0]);
+  if (fusedPcapConfig.clustermode < CLUSTER_MODE_VLAN_IP_PORT || fusedPcapConfig.clustermode > CLUSTER_MODE_IP_PORT) {
+    fprintf(stderr, "%s: clustermode option out of range (%d..%d)\n", argv[0], CLUSTER_MODE_VLAN_IP_PORT, CLUSTER_MODE_IP_PORT);
     exit(1);
   }
-  if (fusedPcapConfig.clusterabend < 0 || fusedPcapConfig.clusterabend > 2) {
-    fprintf(stderr, "%s: clusterabend option out of range (0..2)\n", argv[0]);
+  if (fusedPcapConfig.clusterabend < CLUSTER_ABEND_EOF_ALL_AT_EOF || fusedPcapConfig.clusterabend > CLUSTER_ABEND_IGNORE) {
+    fprintf(stderr, "%s: clusterabend option out of range (%d..%d)\n", argv[0], CLUSTER_ABEND_EOF_ALL_AT_EOF, CLUSTER_ABEND_IGNORE);
     exit(1);
   }
   if (fusedPcapConfig.blockslack == 0)
     fusedPcapConfig.blockslack = DEFAULT_BLOCK_SLACK;
-  else if (fusedPcapConfig.blockslack < 1 || fusedPcapConfig.blockslack > 1024) {
-    fprintf(stderr, "%s: blockslack option out of range (1..1024)\n", argv[0]);
+  else if (fusedPcapConfig.blockslack < MIN_BLOCK_SLACK || fusedPcapConfig.blockslack > MAX_BLOCK_SLACK) {
+    fprintf(stderr, "%s: blockslack option out of range (%d..%d)\n", argv[0], MIN_BLOCK_SLACK, MAX_BLOCK_SLACK);
     exit(1);
   }
 //fprintf(stderr, "pcapfilesize=%lld\nfilesize=%s\nclustersize=%d\nclustermode=%d\nclusterabend=%d\nblockslack=%d\n", (long long int) fusedPcapConfig.pcapfilesize, fusedPcapConfig.filesize, fusedPcapConfig.clustersize, fusedPcapConfig.clustermode, fusedPcapConfig.clusterabend, fusedPcapConfig.blockslack);
