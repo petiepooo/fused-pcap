@@ -478,7 +478,7 @@ void convertValidateFilesize(const char *progname, off_t *size /*output*/, char 
   if (input == NULL) {
     *size = DEFAULT_PCAP_FILESIZE;
     if (fusedPcapGlobal.debug)
-      fprintf(stderr, "filesize=%lli\n", (long long int)*size);
+      fprintf(stderr, "filesize=0x%016llx\n", (long long int)*size);
   }
   else {
     off_t multiplier;
@@ -517,7 +517,7 @@ void convertValidateFilesize(const char *progname, off_t *size /*output*/, char 
       exit(1);
     }
     if (fusedPcapGlobal.debug)
-      fprintf(stderr, "FUSED_PCAP_OPT: filesize=%s (%lli)\n", input, (long long int)*size);
+      fprintf(stderr, "FUSED_PCAP_OPT: filesize=%s (0x%016llx)\n", input, (long long int)*size);
   }
 }
 
