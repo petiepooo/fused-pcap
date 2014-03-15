@@ -19,24 +19,25 @@
  */
 
 #define FUSE_USE_VERSION	26
+#define _FILE_OFFSET_BITS	64
 
 static const char *fusedPcapVersion = "0.0.2a";
 
-//#include <sys/types.h>
-//#include <sys/xattr.h>
-#include <sys/stat.h>
-//#include <sys/statvfs.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <libgen.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <string.h>
-//#include <strings.h>
+//#include <sys/xattr.h>
+//#include <sys/statvfs.h>
 #include <errno.h>
 //#include <assert.h>
-//#include <dirent.h>
+#include <dirent.h>
 #include <fuse.h>
 
 // DEFAULT VALUES AND CONSTRAINTS
@@ -88,10 +89,27 @@ static struct {
 
 static int fused_pcap_getattr(const char *path, struct stat *stData)
 {
+  char mountPath[PATH_MAX + 1];
+  
   //TODO: finish
   (void)path;
   (void)stData;
-  return -EROFS;
+
+  //TODO: handle fused-pcap virtual files
+
+  //TODO: strip option subdirs, locate true path
+  snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, path);
+  if (fusedPcapGlobal.debug)
+    fprintf(stderr, "getattr calling stat for %s\n", mountPath);
+
+  if (stat(mountPath, stData) == -1) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "stat returned error");
+    return -errno;
+  }
+
+  //stData->st_mode &= !0222;
+  return 0;
 }
 
 static int fused_pcap_readlink(const char *path, char *buffer, size_t size)
@@ -204,21 +222,39 @@ static int fused_pcap_utime(const char *path, struct utimbuf *timeBuffer)
 
 static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
 {
-  //TODO: finish
-  (void)path;
-  (void)fileInfo;
-  return -EROFS;
+  char mountPath[PATH_MAX];
+  int ret;
+
+  //TODO: check flags for inappropriate values
+  snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, path);
+  if (fusedPcapGlobal.debug)
+    fprintf(stderr, "open calling open for %s\n", mountPath);
+  ret = open(mountPath, fileInfo->flags);
+  if (ret == -1)
+    return -errno;
+  if (fusedPcapGlobal.debug)
+    fprintf(stderr, "fd %x stored in fuse_file_info for %s\n", ret, mountPath);
+  fileInfo->fh = ret;
+  return 0;
 }
 
 static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fileInfo)
 {
+  off_t offRes;
+  ssize_t sizeRes;
+
   //TODO: finish
   (void)path;
-  (void)buffer;
-  (void)size;
-  (void)offset;
-  (void)fileInfo;
-  return -EROFS;
+  
+  offRes = lseek(fileInfo->fh, offset, SEEK_SET);
+  if (offRes != offset)
+    return -errno;
+
+  sizeRes = read(fileInfo->fh, buffer, size);
+  if (sizeRes == -1)
+    return -errno;
+
+  return sizeRes;
 }
 
 static int fused_pcap_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fileInfo)
@@ -242,10 +278,14 @@ static int fused_pcap_statfs(const char *path, struct statvfs *status)
 
 static int fused_pcap_release(const char *path, struct fuse_file_info *fileInfo)
 {
+  int ret;
+
   //TODO: finish
   (void)path;
-  (void)fileInfo;
-  return -EROFS;
+  ret = close(fileInfo->fh);
+  if (ret == -1)
+    return -errno;
+  return ret;
 }
 
 static int fused_pcap_fsync(const char *path, int dummy, struct fuse_file_info *fileInfo)
