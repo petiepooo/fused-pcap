@@ -79,8 +79,8 @@ enum {
 
 // path to real pcap files
 static struct {
-  char *pcapDirectory;
-  char *mountDirectory;;
+  char pcapDirectory[PATH_MAX + 1];
+  char mountDirectory[PATH_MAX + 1];
   int debug;
 } fusedPcapGlobal;
 
@@ -395,12 +395,14 @@ static int parseMountOptions(void *data, const char *arg, int key, struct fuse_a
   case FUSE_OPT_KEY_NONOPT:
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "FUSE_PARAM: %s\n", arg);
-    if (fusedPcapGlobal.pcapDirectory == NULL) {
-      fusedPcapGlobal.pcapDirectory = strdup(arg);
+    if (fusedPcapGlobal.pcapDirectory[0] == '\0') {
+      realpath(arg, fusedPcapGlobal.pcapDirectory);
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "normalized to %s\n", fusedPcapGlobal.pcapDirectory);
       return 0;
     }
-    else if (fusedPcapGlobal.mountDirectory == NULL) {
-      fusedPcapGlobal.mountDirectory = strdup(arg);
+    else if (fusedPcapGlobal.mountDirectory[0] == '\0') {
+      strncpy(fusedPcapGlobal.mountDirectory, arg, PATH_MAX);
       return 1;
     }
     else {
@@ -574,7 +576,7 @@ int main (int argc, char *argv[])
     convertValidateClusterabend(argv[0], &fusedPcapConfig.clusterabend, fusedPcapInputs.clusterabend);
     convertValidateBlockslack(argv[0], &fusedPcapConfig.blockslack, fusedPcapInputs.blockslack);
 
-    if (fusedPcapGlobal.pcapDirectory == NULL) {
+    if (fusedPcapGlobal.pcapDirectory[0] == '\0') {
       fprintf(stderr, "%s: missing pcap source directory\n", argv[0]);
       return 1;
     }
