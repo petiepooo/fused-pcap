@@ -80,6 +80,7 @@ enum {
 // path to real pcap files
 static struct {
   char *pcapDirectory;
+  char *mountDirectory;;
   int debug;
 } fusedPcapGlobal;
 
@@ -392,8 +393,18 @@ static int parseMountOptions(void *data, const char *arg, int key, struct fuse_a
 {
   switch (key) {
   case FUSE_OPT_KEY_NONOPT:
+    fprintf(stderr, "FUSE_PARAM: %s\n", arg);
     if (fusedPcapGlobal.pcapDirectory == NULL) {
       fusedPcapGlobal.pcapDirectory = strdup(arg);
+      return 0;
+    }
+    else if (fusedPcapGlobal.mountDirectory == NULL) {
+      fusedPcapGlobal.mountDirectory = strdup(arg);
+      return 1;
+    }
+    else {
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "(parameter %s ignored)\n", arg);
       return 0;
     }
     break;
@@ -566,8 +577,6 @@ int main (int argc, char *argv[])
       fprintf(stderr, "%s: missing pcap source directory\n", argv[0]);
       return 1;
     }
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "FUSE_ARG: source directory: %s\n", fusedPcapGlobal.pcapDirectory);
 
     //TODO: validate source directory parameter
 
