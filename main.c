@@ -42,9 +42,9 @@ static const char *fusedPcapVersion = "0.0.2a";
 // DEFAULT VALUES AND CONSTRAINTS
 
 // range and default slack between slowest and fastest cluster member in blocks
-#define DEFAULT_BLOCK_SLACK 256
+#define DEFAULT_BLOCK_SLACK 2048
 #define MIN_BLOCK_SLACK 1
-#define MAX_BLOCK_SLACK 1024
+#define MAX_BLOCK_SLACK 1048576
 
 // MAX members in a cluster
 #define MAX_CLUSTER_SIZE 32
@@ -56,11 +56,11 @@ static const char *fusedPcapVersion = "0.0.2a";
 // enumerated and default cluster modes
 enum {
   CLUSTER_MODE_INVALID,
-  CLUSTER_MODE_VLAN_IP_PORT,
   CLUSTER_MODE_VLAN,
   CLUSTER_MODE_IP,
   CLUSTER_MODE_VLAN_IP,
-  CLUSTER_MODE_IP_PORT
+  CLUSTER_MODE_IP_PORT,
+  CLUSTER_MODE_VLAN_IP_PORT
 };
 #define DEFAULT_CLUSTER_MODE CLUSTER_MODE_VLAN_IP_PORT
 
@@ -336,11 +336,11 @@ static void usage(const char *progname)
 "Usage: %s [-h | -v | -o opt[,opt[...]] pcapdirpath mountpoint\n"
 "\n"
 "%s options:\n"
-"  filesize=X - size of file returned in fstat() call, K, M, G, T, and P suffixes allowed (default 512T)\n"
-"  clustersize=X - block reads until X processes have connected to and read from the same file (default 1)\n"
-"  clustermode=X - how to distribute packets between cluster members (0=vlan+ip+port, 1=vlan, 2=ip, 3=vlan+ip, 4=ip+port) (default=0)\n"
-"  clusterabend=X - how to handle premature closure of cluster member's read handle (0=err, 1=eof, 2=ignore) (default=0)\n"
-"  blockslack=X - number of blocks to allow between leading and lagging reads in a cluster (default TBD)\n"
+"    -o filesize=N          set size of file returned in fstat() call, K, M, G, T, and P suffixes allowed (default 2048P)\n"
+"    -o clustersize=N       block reads until N processes have connected to and read from the same file (default 1)\n"
+"    -o clustermode=N       set distribution of packets to cluster members (1=vlan, 2=ip, 3=vlan+ip, 4=ip+port, 5=vlan+ip+port) (default=5)\n"
+"    -o clusterabend=N      set handling of premature closure of a member's read handle (1=eof, 2=err, 3=imm_eof, 4-imm_err, 5=ign) (default=1)\n"
+"    -o blockslack=N        set number of blocks to allow between leading and lagging reads in a cluster (default 2048)\n"
 "\n", progname, progname);
 }
 
@@ -494,8 +494,8 @@ void convertValidateClustermode(const char *progname, int *mode /*output*/, cons
   }
   else {
     *mode = atoi(input);
-    if (*mode < CLUSTER_MODE_VLAN_IP_PORT || *mode > CLUSTER_MODE_IP_PORT) {
-      fprintf(stderr, "%s: clustermode option out of range (%d..%d)\n", progname, CLUSTER_MODE_VLAN_IP_PORT, CLUSTER_MODE_IP_PORT);
+    if (*mode < CLUSTER_MODE_VLAN || *mode > CLUSTER_MODE_VLAN_IP_PORT) {
+      fprintf(stderr, "%s: clustermode option out of range (%d..%d)\n", progname, CLUSTER_MODE_VLAN, CLUSTER_MODE_VLAN_IP_PORT);
       exit(1);
     }
     if (fusedPcapGlobal.debug)
