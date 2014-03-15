@@ -393,7 +393,8 @@ static int parseMountOptions(void *data, const char *arg, int key, struct fuse_a
 {
   switch (key) {
   case FUSE_OPT_KEY_NONOPT:
-    fprintf(stderr, "FUSE_PARAM: %s\n", arg);
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "FUSE_PARAM: %s\n", arg);
     if (fusedPcapGlobal.pcapDirectory == NULL) {
       fusedPcapGlobal.pcapDirectory = strdup(arg);
       return 0;
