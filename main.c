@@ -360,15 +360,16 @@ struct fusedPcapConfig_s {
   int blockslack;
 } fusedPcapConfig;
 
-struct fusedPcapStrings_s {
+struct fusedPcapInputs_s {
   char *filesize;
   char *clustermode;
   char *clusterabend;
   char *clustersize;
   char *blockslack;
-} fusedPcapStrings;
+  int help;
+} fusedPcapInputs;
 
-#define FUSED_PCAP_OPT(t, p, v) { t, offsetof(struct fusedPcapStrings_s, p), v }
+#define FUSED_PCAP_OPT(t, p, v) { t, offsetof(struct fusedPcapInputs_s, p), v }
 
 static struct fuse_opt fusedPcapOptions[] = {
   FUSED_PCAP_OPT("filesize=%s",     filesize,     0),
@@ -401,8 +402,9 @@ static int parseMountOptions(void *data, const char *arg, int key, struct fuse_a
       fprintf(stderr, "FUSE_OPT: %s\n", arg);
     break;
   case FUSED_PCAP_OPT_KEY_HELP:
+    fusedPcapInputs.help = 1;
     usage(basename(arguments->argv[0]));
-    exit(0);
+    return fuse_opt_add_arg(arguments, "-ho");
   case FUSED_PCAP_OPT_KEY_VERSION:
     fprintf(stdout, "%s version %s\n", basename(arguments->argv[0]), fusedPcapVersion);
     exit(0);
@@ -542,33 +544,36 @@ int main (int argc, char *argv[])
   struct fuse_args fuseArgs = FUSE_ARGS_INIT(argc, argv);
   //struct fuse_args moreArgs = FUSE_ARGS_INIT(0, NULL);
 
-  if ((fuse_opt_parse(&fuseArgs, &fusedPcapStrings, fusedPcapOptions, parseMountOptions)) == -1) {
+  if ((fuse_opt_parse(&fuseArgs, &fusedPcapInputs, fusedPcapOptions, parseMountOptions)) == -1) {
     fprintf(stderr, "%s: invalid arguments\n", argv[0]);
-    exit(1);
+    return 1;
   }
+  if (!fusedPcapInputs.help)
+  {
 
-  //TODO: add read-only option if needed
-  //fuse_opt_add_arg (&moreArgs, "-oro");
-  //fuse_opt_parse(&moreArgs, &fusedPcapConfig, fusedPcapOptions, parseMountOptions);
+    //TODO: add read-only option if needed
+    //fuse_opt_add_arg (&moreArgs, "-oro");
+    //fuse_opt_parse(&moreArgs, &fusedPcapConfig, fusedPcapOptions, parseMountOptions);
 
-  // convert and validate options
-  convertValidateFilesize(argv[0], &fusedPcapConfig.filesize, fusedPcapStrings.filesize); 
-  convertValidateClustermode(argv[0], &fusedPcapConfig.clustermode, fusedPcapStrings.clustermode); 
-  convertValidateClustersize(argv[0], &fusedPcapConfig.clustersize, fusedPcapStrings.clustersize); 
-  convertValidateClusterabend(argv[0], &fusedPcapConfig.clusterabend, fusedPcapStrings.clusterabend); 
-  convertValidateBlockslack(argv[0], &fusedPcapConfig.blockslack, fusedPcapStrings.blockslack); 
+    // convert and validate options
+    convertValidateFilesize(argv[0], &fusedPcapConfig.filesize, fusedPcapInputs.filesize);
+    convertValidateClustermode(argv[0], &fusedPcapConfig.clustermode, fusedPcapInputs.clustermode);
+    convertValidateClustersize(argv[0], &fusedPcapConfig.clustersize, fusedPcapInputs.clustersize);
+    convertValidateClusterabend(argv[0], &fusedPcapConfig.clusterabend, fusedPcapInputs.clusterabend);
+    convertValidateBlockslack(argv[0], &fusedPcapConfig.blockslack, fusedPcapInputs.blockslack);
 
-  if (fusedPcapGlobal.pcapDirectory == NULL) {
-    fprintf(stderr, "%s: missing pcap source directory\n", argv[0]);
-    exit(1);
+    if (fusedPcapGlobal.pcapDirectory == NULL) {
+      fprintf(stderr, "%s: missing pcap source directory\n", argv[0]);
+      return 1;
+    }
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "FUSE_ARG: source directory: %s\n", fusedPcapGlobal.pcapDirectory);
+
+    //TODO: validate source directory parameter
+
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "Parameters validated, calling fuse_main()\n");
   }
-  else if (fusedPcapGlobal.debug)
-    fprintf(stderr, "FUSE_ARG: source directory: %s\n", fusedPcapGlobal.pcapDirectory);
-
-  //TODO: validate source directory parameter
-
-  if (fusedPcapGlobal.debug)
-    fprintf(stderr, "Parameters validated, calling fuse_main()\n");
 
 #if FUSE_VERSION >= 26
   return fuse_main(fuseArgs.argc, fuseArgs.argv, &callbackOperations, NULL);
