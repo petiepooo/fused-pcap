@@ -265,31 +265,21 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
   
   if (reapConfigDirs(path, &shortPath, &fileConfig))
     return -ENOENT;
-  if (shortPath)
-    snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
-  else
-    snprintf(mountPath, PATH_MAX, "%s/", fusedPcapGlobal.pcapDirectory);
   if (fusedPcapGlobal.debug)
     printConfigStruct(&fileConfig);
-/*
- * TODO: handle fused-pcap virtual files
- * if (isSpecialFile(shortPath, fileConfig)) {
- *   return the special file's attributes
- * }
- * else {
- *   fd = getCachedConfig(shortPath, fileConfig);
- *   if (!fd)
- *     fd = cacheConfig(shortPath, fileConfig);
- *   fstat(fd, stData);
- * }
- */
+
+  if (! shortPath)
+    shortPath = "/";
+  snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
+
+  //TODO: separateEndingFile(&shortPath, &endFile);
 
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "getattr calling stat for %s\n", mountPath);
 
   if (stat(mountPath, stData) == -1) {
     if (fusedPcapGlobal.debug)
-      fprintf(stderr, "stat returned error");
+      fprintf(stderr, "stat returned error\n");
     return -errno;
   }
 
@@ -417,10 +407,9 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   if (fusedPcapGlobal.debug)
     printConfigStruct(&fileConfig);
 
-  if (shortPath)
-    snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
-  else
-    snprintf(mountPath, PATH_MAX, "%s/", fusedPcapGlobal.pcapDirectory);
+  if (! shortPath)
+    shortPath = "/";
+  snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
 
   //TODO: check flags for inappropriate values
 
