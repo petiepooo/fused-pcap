@@ -95,7 +95,7 @@ static struct fusedPcapConfig_s {
 
 // SUPPORT FUNCTIONS
 
-void printConfigStruct(struct fusedPcapConfig_s *config)
+static void printConfigStruct(struct fusedPcapConfig_s *config)
 {
   fprintf(stderr, "  %s: 0x%016llx\n  %s: %d  %s: %d\n  %s: %d  %s: %d\n",
           "filesize", (long long int) config->filesize,
@@ -105,7 +105,7 @@ void printConfigStruct(struct fusedPcapConfig_s *config)
           "blockslack", config->blockslack);
 }
 
-int convertValidateFilesize(off_t *size /*output*/, const char *input)
+static int convertValidateFilesize(off_t *size /*output*/, const char *input)
 {
   const char *suffix;
 
@@ -156,7 +156,7 @@ int convertValidateFilesize(off_t *size /*output*/, const char *input)
   return 0;
 }
 
-int convertValidateClustersize(int *size /*output*/, const char *input)
+static int convertValidateClustersize(int *size /*output*/, const char *input)
 {
   if (input == 0)
     *size = 1;
@@ -170,7 +170,7 @@ int convertValidateClustersize(int *size /*output*/, const char *input)
   return 0;
 }
 
-int convertValidateClustermode(int *mode /*output*/, const char *input)
+static int convertValidateClustermode(int *mode /*output*/, const char *input)
 {
   if (input == 0)
     *mode = DEFAULT_CLUSTER_MODE;
@@ -184,7 +184,7 @@ int convertValidateClustermode(int *mode /*output*/, const char *input)
   return 0;
 }
 
-int convertValidateClusterabend(int *action /*output*/, const char *input)
+static int convertValidateClusterabend(int *action /*output*/, const char *input)
 {
   if (input == 0)
     *action = DEFAULT_CLUSTER_ABEND;
@@ -198,7 +198,7 @@ int convertValidateClusterabend(int *action /*output*/, const char *input)
   return 0;
 }
 
-int convertValidateBlockslack(int *slack /*output*/, const char *input)
+static int convertValidateBlockslack(int *slack /*output*/, const char *input)
 {
   if (input == 0)
     *slack = DEFAULT_BLOCK_SLACK;
