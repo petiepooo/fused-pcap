@@ -105,9 +105,9 @@ void printConfigStruct(struct fusedPcapConfig_s *config)
           "blockslack", config->blockslack);
 }
 
-int convertValidateFilesize(off_t *size /*output*/, char *input)
+int convertValidateFilesize(off_t *size /*output*/, const char *input)
 {
-  char *suffix;
+  const char *suffix;
 
   if (input == NULL)
     *size = DEFAULT_PCAP_FILESIZE;
@@ -146,8 +146,12 @@ int convertValidateFilesize(off_t *size /*output*/, char *input)
     *size = atoll(input) * multiplier;
     if (*size < multiplier)
       return 1;
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "FUSED_PCAP_OPT: filesize=%s (0x%016llx)\n", input, (long long int)*size);
+    if (fusedPcapGlobal.debug) {
+      char value[32];
+      memset(value, '\0', 32);
+      strncpy(value, input, strchr(input, '/') ? (strchr(input, '/') - input) & 31ll : 31);
+      fprintf(stderr, "FUSED_PCAP_OPT: filesize=%s (0x%016llx)\n", value, (long long int)*size);
+    }
   }
   return 0;
 }
