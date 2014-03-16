@@ -32,6 +32,7 @@ static const char *fusedPcapVersion = "0.0.2a";
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <ctype.h>
 #include <string.h>
 //#include <sys/xattr.h>
 //#include <sys/statvfs.h>
@@ -76,29 +77,213 @@ enum {
 };
 #define DEFAULT_CLUSTER_ABEND CLUSTER_ABEND_EOF_ALL_AT_EOF
 
-// GLOBAL VARIABLES
+// GLOBAL STRUCTURES
 
-// path to real pcap files
 static struct {
   char pcapDirectory[PATH_MAX + 1];
   char mountDirectory[PATH_MAX + 1];
   int debug;
 } fusedPcapGlobal;
 
-// FUSE CALLBACKS
+static struct fusedPcapConfig_s {
+  off_t filesize;
+  int clustersize;
+  int clustermode;
+  int clusterabend;
+  int blockslack;
+} fusedPcapConfig;
+
+// SUPPORT FUNCTIONS
+
+void printConfigStruct(struct fusedPcapConfig_s *config)
+{
+  fprintf(stderr, "  %s: 0x%016llx\n  %s: %d  %s: %d\n  %s: %d  %s: %d\n",
+          "filesize", (long long int) config->filesize,
+          "clustersize", config->clustersize,
+          "clusterabend", config->clusterabend,
+          "clustermode", config->clustermode,
+          "blockslack", config->blockslack);
+}
+
+int convertValidateFilesize(off_t *size /*output*/, char *input)
+{
+  char *suffix;
+
+  if (input == NULL)
+    *size = DEFAULT_PCAP_FILESIZE;
+  else {
+    off_t multiplier;
+
+    multiplier = 1ll;
+    suffix = input;
+    while (isdigit(suffix[0]))
+      suffix++;
+    switch (suffix[0]) {
+    case 'K':
+    case 'k':
+      multiplier = 1024ll;
+      break;
+    case 'M':
+    case 'm':
+      multiplier = 1024ll * 1024;
+      break;
+    case 'G':
+    case 'g':
+      multiplier = 1024ll * 1024 * 1024;
+      break;
+    case 'T':
+    case 't':
+      multiplier = 1024ll * 1024 * 1024 * 1024;
+      break;
+    case 'P':
+    case 'p':
+      multiplier = 1024ll * 1024 * 1024 * 1024 * 1024;
+      break;
+    default:
+      break;
+    }
+
+    *size = atoll(input) * multiplier;
+    if (*size < multiplier)
+      return 1;
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "FUSED_PCAP_OPT: filesize=%s (0x%016llx)\n", input, (long long int)*size);
+  }
+  return 0;
+}
+
+int convertValidateClustersize(int *size /*output*/, const char *input)
+{
+  if (input == 0)
+    *size = 1;
+  else {
+    *size = atoi(input);
+    if (*size < 1 || *size > MAX_CLUSTER_SIZE)
+      return 1;
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "FUSED_PCAP_OPT: clustersize=%d\n", *size);
+  }
+  return 0;
+}
+
+int convertValidateClustermode(int *mode /*output*/, const char *input)
+{
+  if (input == 0)
+    *mode = DEFAULT_CLUSTER_MODE;
+  else {
+    *mode = atoi(input);
+    if (*mode < CLUSTER_MODE_VLAN || *mode > CLUSTER_MODE_VLAN_IP_PORT)
+      return 1;
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "FUSED_PCAP_OPT: clustermode=%d\n", *mode);
+  }
+  return 0;
+}
+
+int convertValidateClusterabend(int *action /*output*/, const char *input)
+{
+  if (input == 0)
+    *action = DEFAULT_CLUSTER_ABEND;
+  else {
+    *action = atoi(input);
+    if (*action < CLUSTER_ABEND_EOF_ALL_AT_EOF || *action > CLUSTER_ABEND_IGNORE)
+      return 1;
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "FUSED_PCAP_OPT: clusterabend=%d\n", *action);
+  }
+  return 0;
+}
+
+int convertValidateBlockslack(int *slack /*output*/, const char *input)
+{
+  if (input == 0)
+    *slack = DEFAULT_BLOCK_SLACK;
+  else {
+    *slack = atoi(input);
+    if (*slack < MIN_BLOCK_SLACK || *slack > MAX_BLOCK_SLACK)
+      return 1;
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "FUSED_PCAP_OPT: blockslack=%d\n", *slack);
+  }
+  return 0;
+}
+
+static int reapConfigDirs(const char *path, char **shortPath, struct fusedPcapConfig_s *fileConfig)
+{
+  *shortPath = (char *)path;
+  memcpy(fileConfig, &fusedPcapConfig, sizeof(struct fusedPcapConfig_s));
+  if (path == NULL || path[0] != '/')
+    return 1;
+  while (*shortPath) {
+    if (strncmp("/filesize=", *shortPath, 10) == 0) {
+      *shortPath += 10;
+      if (convertValidateFilesize(&fileConfig->filesize, *shortPath))
+        return 1;
+      *shortPath = strchr(*shortPath, '/');
+      continue;
+    }
+    if (strncmp("/blockslack=", *shortPath, 12) == 0) {
+      *shortPath += 12;
+      if (convertValidateBlockslack(&fileConfig->blockslack, *shortPath))
+        return 1;
+      *shortPath = strchr(*shortPath, '/');
+      continue;
+    }
+    if (strncmp("/cluster", *shortPath, 8) == 0) {
+      if (strncmp("size=", *shortPath + 8, 5) == 0) {
+        *shortPath += 13;
+        if (convertValidateClustersize(&fileConfig->clustersize, *shortPath))
+          return 1;
+        *shortPath = strchr(*shortPath, '/');
+        continue;
+      }
+      if (strncmp("mode=", *shortPath + 8, 5) == 0) {
+        *shortPath += 13;
+        if (convertValidateClustermode(&fileConfig->clustermode, *shortPath))
+          return 1;
+        *shortPath = strchr(*shortPath, '/');
+        continue;
+      }
+      if (strncmp("abend=",* shortPath + 8, 6) == 0) {
+        *shortPath += 14;
+        if (convertValidateClusterabend(&fileConfig->clusterabend, *shortPath))
+          return 1;
+        *shortPath = strchr(*shortPath, '/');
+        continue;
+      }
+    }
+    break;
+  }
+  return 0;
+}
 
 static int fused_pcap_getattr(const char *path, struct stat *stData)
 {
   char mountPath[PATH_MAX + 1];
+  struct fusedPcapConfig_s fileConfig;
+  char *shortPath;
   
-  //TODO: finish
-  (void)path;
-  (void)stData;
+  if (reapConfigDirs(path, &shortPath, &fileConfig))
+    return -ENOENT;
+  if (shortPath)
+    snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
+  else
+    snprintf(mountPath, PATH_MAX, "%s/", fusedPcapGlobal.pcapDirectory);
+  if (fusedPcapGlobal.debug)
+    printConfigStruct(&fileConfig);
+/*
+ * TODO: handle fused-pcap virtual files
+ * if (isSpecialFile(shortPath, fileConfig)) {
+ *   return the special file's attributes
+ * }
+ * else {
+ *   fd = getCachedConfig(shortPath, fileConfig);
+ *   if (!fd)
+ *     fd = cacheConfig(shortPath, fileConfig);
+ *   fstat(fd, stData);
+ * }
+ */
 
-  //TODO: handle fused-pcap virtual files
-
-  //TODO: strip option subdirs, locate true path
-  snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, path);
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "getattr calling stat for %s\n", mountPath);
 
@@ -222,11 +407,23 @@ static int fused_pcap_utime(const char *path, struct utimbuf *timeBuffer)
 
 static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
 {
-  char mountPath[PATH_MAX];
+  char mountPath[PATH_MAX + 1];
+  struct fusedPcapConfig_s fileConfig;
+  char *shortPath;
   int ret;
+  
+  if (reapConfigDirs(path, &shortPath, &fileConfig))
+    return -ENOENT;
+  if (fusedPcapGlobal.debug)
+    printConfigStruct(&fileConfig);
+
+  if (shortPath)
+    snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
+  else
+    snprintf(mountPath, PATH_MAX, "%s/", fusedPcapGlobal.pcapDirectory);
 
   //TODO: check flags for inappropriate values
-  snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, path);
+
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "open calling open for %s\n", mountPath);
   ret = open(mountPath, fileInfo->flags);
@@ -393,14 +590,6 @@ enum {
   FUSED_PCAP_OPT_KEY_DEBUG,
 };
 
-struct fusedPcapConfig_s {
-  off_t filesize;
-  int clustersize;
-  int clustermode;
-  int clusterabend;
-  int blockslack;
-} fusedPcapConfig;
-
 struct fusedPcapInputs_s {
   char *filesize;
   char *clustermode;
@@ -473,126 +662,6 @@ static int parseMountOptions(void *data, const char *arg, int key, struct fuse_a
   return 1;
 }
 
-void convertValidateFilesize(const char *progname, off_t *size /*output*/, char *input)
-{
-  if (input == NULL) {
-    *size = DEFAULT_PCAP_FILESIZE;
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "filesize=0x%016llx\n", (long long int)*size);
-  }
-  else {
-    off_t multiplier;
-
-    multiplier = 1ll;
-    switch (input[strlen(input)]) {
-    case 'K':
-    case 'k':
-      multiplier = 1024ll;
-      break;
-    case 'M':
-    case 'm':
-      multiplier = 1024ll * 1024;
-      break;
-    case 'G':
-    case 'g':
-      multiplier = 1024ll * 1024 * 1024;
-      break;
-    case 'T':
-    case 't':
-      multiplier = 1024ll * 1024 * 1024 * 1024;
-      break;
-    case 'P':
-    case 'p':
-      multiplier = 1024ll * 1024 * 1024 * 1024 * 1024;
-      break;
-    default:
-      break;
-    }
-
-    *size = atoll(input) * multiplier;
-    if (*size < multiplier) {
-      fprintf(stderr, "%s: filesize option out of range (1..2^63-1)\n", progname);
-      if (*size != 0 && input[0] != '-')
-        fprintf(stderr, "Congratulations! you overflowed a 64-bit integer.\n");
-      exit(1);
-    }
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "FUSED_PCAP_OPT: filesize=%s (0x%016llx)\n", input, (long long int)*size);
-  }
-}
-
-void convertValidateClustersize(const char *progname, int *size /*output*/, const char *input)
-{
-  if (input == 0) {
-    *size = 1;
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "clustersize=%d\n", *size);
-  }
-  else {
-    *size = atoi(input);
-    if (*size < 1 || *size > MAX_CLUSTER_SIZE) {
-      fprintf(stderr, "%s: clustersize option out of range (1..%d)\n", progname, MAX_CLUSTER_SIZE);
-      exit(1);
-    }
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "FUSED_PCAP_OPT: clustersize=%d\n", *size);
-  }
-}
-
-void convertValidateClustermode(const char *progname, int *mode /*output*/, const char *input)
-{
-  if (input == 0) {
-    *mode = DEFAULT_CLUSTER_MODE;
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "clustermode=%d\n", *mode);
-  }
-  else {
-    *mode = atoi(input);
-    if (*mode < CLUSTER_MODE_VLAN || *mode > CLUSTER_MODE_VLAN_IP_PORT) {
-      fprintf(stderr, "%s: clustermode option out of range (%d..%d)\n", progname, CLUSTER_MODE_VLAN, CLUSTER_MODE_VLAN_IP_PORT);
-      exit(1);
-    }
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "FUSED_PCAP_OPT: clustermode=%d\n", *mode);
-  }
-}
-
-void convertValidateClusterabend(const char *progname, int *action /*output*/, const char *input)
-{
-  if (input == 0) {
-    *action = DEFAULT_CLUSTER_ABEND;
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "clusterabend=%d\n", *action);
-  }
-  else {
-    *action = atoi(input);
-    if (*action < CLUSTER_ABEND_EOF_ALL_AT_EOF || *action > CLUSTER_ABEND_IGNORE) {
-      fprintf(stderr, "%s: clusterabend option out of range (%d..%d)\n", progname, CLUSTER_ABEND_EOF_ALL_AT_EOF, CLUSTER_ABEND_IGNORE);
-      exit(1);
-    }
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "FUSED_PCAP_OPT: clusterabend=%d\n", *action);
-  }
-}
-
-void convertValidateBlockslack(const char *progname, int *slack /*output*/, const char *input)
-{
-  if (input == 0) {
-    *slack = DEFAULT_BLOCK_SLACK;
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "blockslack=%d\n", *slack);
-  }
-  else {
-    *slack = atoi(input);
-    if (*slack < MIN_BLOCK_SLACK || *slack > MAX_BLOCK_SLACK) {
-      fprintf(stderr, "%s: blockslack option out of range (%d..%d)\n", progname, MIN_BLOCK_SLACK, MAX_BLOCK_SLACK);
-      exit(1);
-    }
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "FUSED_PCAP_OPT: blockslack=%d\n", *slack);
-  }
-}
-
 int main (int argc, char *argv[])
 {
   struct fuse_args fuseArgs = FUSE_ARGS_INIT(argc, argv);
@@ -610,11 +679,28 @@ int main (int argc, char *argv[])
     //fuse_opt_parse(&moreArgs, &fusedPcapConfig, fusedPcapOptions, parseMountOptions);
 
     // convert and validate options
-    convertValidateFilesize(argv[0], &fusedPcapConfig.filesize, fusedPcapInputs.filesize);
-    convertValidateClustermode(argv[0], &fusedPcapConfig.clustermode, fusedPcapInputs.clustermode);
-    convertValidateClustersize(argv[0], &fusedPcapConfig.clustersize, fusedPcapInputs.clustersize);
-    convertValidateClusterabend(argv[0], &fusedPcapConfig.clusterabend, fusedPcapInputs.clusterabend);
-    convertValidateBlockslack(argv[0], &fusedPcapConfig.blockslack, fusedPcapInputs.blockslack);
+    if (convertValidateFilesize(&fusedPcapConfig.filesize, fusedPcapInputs.filesize)) {
+      fprintf(stderr, "%s: filesize option out of range (1..2^63-1)\n", argv[0]);
+      if (fusedPcapConfig.filesize != 0 && fusedPcapInputs.filesize[0] != '-')
+        fprintf(stderr, "Congratulations! you overflowed a 64-bit integer.\n");
+      return 1;
+    }
+    if (convertValidateClustermode(&fusedPcapConfig.clustermode, fusedPcapInputs.clustermode)) {
+      fprintf(stderr, "%s: clustermode option out of range (%d..%d)\n", argv[0], CLUSTER_MODE_VLAN, CLUSTER_MODE_VLAN_IP_PORT);
+      return 1;
+    }
+    if (convertValidateClustersize(&fusedPcapConfig.clustersize, fusedPcapInputs.clustersize)) {
+      fprintf(stderr, "%s: clustersize option out of range (1..%d)\n", argv[0], MAX_CLUSTER_SIZE);
+      return 1;
+    }
+    if (convertValidateClusterabend(&fusedPcapConfig.clusterabend, fusedPcapInputs.clusterabend)) {
+      fprintf(stderr, "%s: clusterabend option out of range (%d..%d)\n", argv[0], CLUSTER_ABEND_EOF_ALL_AT_EOF, CLUSTER_ABEND_IGNORE);
+      return 1;
+    }
+    if (convertValidateBlockslack(&fusedPcapConfig.blockslack, fusedPcapInputs.blockslack)) {
+      fprintf(stderr, "%s: blockslack option out of range (%d..%d)\n", argv[0], MIN_BLOCK_SLACK, MAX_BLOCK_SLACK);
+      return 1;
+    }
 
     if (fusedPcapGlobal.pcapDirectory[0] == '\0') {
       fprintf(stderr, "%s: missing pcap source directory\n", argv[0]);
@@ -623,8 +709,10 @@ int main (int argc, char *argv[])
 
     //TODO: validate source directory parameter
 
-    if (fusedPcapGlobal.debug)
+    if (fusedPcapGlobal.debug) {
+      printConfigStruct(&fusedPcapConfig);
       fprintf(stderr, "Parameters validated, calling fuse_main()\n");
+    }
   }
 
 #if FUSE_VERSION >= 26
