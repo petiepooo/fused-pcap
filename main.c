@@ -262,7 +262,15 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
   char mountPath[PATH_MAX + 1];
   struct fusedPcapConfig_s fileConfig;
   char *shortPath;
-  
+  //char *endFile;
+
+  //TODO:
+  //if (isSpecialFile(path)
+    //return the file's stData
+  //if (isInCache(path)
+    //return the cached stData
+
+  //first time calling, build cache entry
   if (reapConfigDirs(path, &shortPath, &fileConfig))
     return -ENOENT;
   if (fusedPcapGlobal.debug)
@@ -276,14 +284,17 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
 
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "getattr calling stat for %s\n", mountPath);
-
   if (stat(mountPath, stData) == -1) {
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "stat returned error\n");
     return -errno;
   }
 
-  //stData->st_mode &= !0222;
+  //TODO:
+  //stData->st_size = fusedPcapConfig.filesize;
+  //if (endFile)
+    //stData->st_size = computeFilesize(mountPath, endFile);
+
   return 0;
 }
 
@@ -402,6 +413,9 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   char *shortPath;
   int ret;
   
+  //if (isSpecialFile(path)
+    //return the file's fd
+
   if (reapConfigDirs(path, &shortPath, &fileConfig))
     return -ENOENT;
   if (fusedPcapGlobal.debug)
@@ -411,13 +425,32 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
     shortPath = "/";
   snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
 
-  //TODO: check flags for inappropriate values
+  //TODO: check fileInfo->flags for inappropriate values
 
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "open calling open for %s\n", mountPath);
   ret = open(mountPath, fileInfo->flags);
   if (ret == -1)
     return -errno;
+
+  //TODO: create new per-fh entry in array, store in fileInfo->fh_old
+  //allocate a new fileEntry
+  //memcpy(fileEntry->fileConfig, fileConfig, sizeof(struct fusedPcapConfig_t));
+  //strdup(fileEntry->shortPath, shortPath);
+  //strdup(fileEntry->fusePath, path);
+  //fileEntry->flags = fileInfo->flags;
+  //fileEntry->inputOffset = 0;
+  //fileEntry->readOffset = 0;
+  //fileEntry->fd = ret;
+  //if (fileConfig.clustersize > 1)
+    //find (or populate) clusterIndex
+    //fileEntry->clusterIndex = clusterIndex;
+    //clusterMember = determine which member this fh will be
+    //fileEntry->clusterMember = clusterMember;
+    //clusterIndex->member[clusterMember] = fileEntry;
+    //trip event
+  //fileInfo->fh = (uint64_t)fileEntry;
+
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "fd %x stored in fuse_file_info for %s\n", ret, mountPath);
   fileInfo->fh = ret;
@@ -430,17 +463,111 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
   ssize_t sizeRes;
 
   //TODO: finish
-  (void)path;
+
+  //fileEntry = (struct fileEntry_t *)fileInfo->fh;
+  //if (fileEntry->readOffset != offset)
+    //ERROR? not a sequential read
+
+  //if (fileEntry->abortEof) {
+    //if (fusedPcapGlobal.debug)
+      //fprintf(stderr, "aborting cluster member %d before read with EOF\n", fileEntry->clusterMember);
+    //fileEntry->fileConfig.fileSize = fileEntry->fileConfig.readOffset;
+    //fileEntry->normalEnding = 1;
+    //return 0;
+  //}
+  //if (fileEntry->abortErr) {
+    //if (fusedPcapGlobal.debug)
+      //fprintf(stderr, "aborting cluster member %d before read with ENOENT\n", fileEntry->clusterMember);
+    //fileEntry->normalEnding = 1;
+    //return -ENOENT;  //is this the right error?
+  //}
+
+  //clustersize = fileEntry->fileConfig.clustersize;
+  //if (clustersize > 1) {
+    //clusterIndex = fileEntry->clusterIndex;
+
+    //if (! clusterIndex->fullyPopulated) {
+      //do {
+        //for (i=0; i<clustersize; i++) {
+          //if (clusterIndex->member[i] == NULL) {
+            //if (non-blocking)
+              //return -EAGAIN;
+            //else
+              //break;
+          //}
+        //}
+        //if (i == clustersize) {
+          //clusterIndex->fullyPopulated = 1;
+          //break;
+        //}
+      //} while (wait for next open event, blocking this read)
+    //}
+
+    //do (
+      //for (i=0; i<clustersize; i++) (
+        //if (clusterIndex->member[i] == NULL) {
+          //if (clusterIndex->member[i]->readOffset too far behind) {
+            //set cluster member to trigger read event (race condition between setting trigger and blocking?)
+            //if (non-blocking)
+              //return -EAGAIN;
+            //else
+              //break;
+          //}
+        //}
+      //}
+      //if (i == clustersize)
+        //break;
+    //} while (wait for next read event, blocking this read)
+  //}
   
+  //offRes = lseek(fileEntry->fd, fileEntry->inputOffset, SEEK_SET);
   offRes = lseek(fileInfo->fh, offset, SEEK_SET);
   if (offRes != offset)
     return -errno;
 
+  //sizeRes = read(fileEntry->fd, buffer, size);
   sizeRes = read(fileInfo->fh, buffer, size);
   if (sizeRes == -1)
     return -errno;
+  if (fusedPcapGlobal.debug)
+    fprintf(stderr, "read returned %lli\n", (long long int) sizeRes);
 
-  return sizeRes;
+  if (sizeRes == 0) {
+    // at end of cuurent file. 
+    //is this lastFile?
+      //fileEntry->normalEnding = 1;
+      //fileEntry->abortEof = 1;
+      //fileEntry->fileConfig.fileSize = fileEntry->fileConfig.readOffset;
+      return 0;
+    //if (is the next one ready?) {
+      //close(fileEntry->fd);
+      //fileEntry->fd = NULL;
+      //if (fileEntry->fileEndEof) {
+        //if (fusedPcapGlobal.debug)
+          //fprintf(stderr, "setting cluster member %d to abort before next read with EOF\n", fileEntry->clusterMember);
+        //fileEntry->abortEof = 1;
+      //}
+      //else if (fileEntry->fileEndErr) {
+        //if (fusedPcapGlobal.debug)
+          //fprintf(stderr, "setting cluster member %d to abort before next read with an error\n", fileEntry->clusterMember);
+        //fileEntry->abortErr = 1;
+      //}
+      //else {
+        //fileEntry->fd = open(nextFilePath, fileEntry->flags);
+        //fileEntry->inputOffset
+      //}
+    //}
+    //else {
+      //if (! non-blocking)
+        //block until more available //TODO: figure out how to determine more is available
+      // return -EAGAIN
+    //}
+  }
+  else {
+    //fileEntry->readOffset += sizeRes;
+    //fileEntry->inputOffset += sizeRes;
+    return sizeRes;
+  }
 }
 
 static int fused_pcap_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fileInfo)
@@ -468,6 +595,33 @@ static int fused_pcap_release(const char *path, struct fuse_file_info *fileInfo)
 
   //TODO: finish
   (void)path;
+  //fileEntry = (struct fileEntry_t *)fileInfo->fh;
+  //if (fileEntry->fd)
+    //ret = close(fileEntry->fd);
+  //if (! fileEntry->normalEnding)
+    //for (each fileEntry structure in the cluster) {
+      //switch (fileEntry->config.clusterabend) {
+      //case CLUSTER_ABEND_EOF_ALL_AT_EOF:
+        //fileEntry->fileEndEof = 1;
+        //break;
+      //case CLUSTER_ABEND_ERR_ALL_AT_EOF:
+        //fileEntry->fileEndEof = 1;
+        //break;
+      //case CLUSTER_ABEND_IMMEDIATE_EOF_ALL:
+        //fileEntry->abortEof = 1;
+        //break;
+      //case CLUSTER_ABEND_IMMEDIATE_ERROR_ALL:
+        //fileEntry->abortErr = 1;
+        //break;
+      //case CLUSTER_ABEND_IGNORE:
+        //break;
+      //};
+    //};
+  //};
+  //remove fileEntry from cluster index;
+  //if (last fileEntry in clusterIndex)
+    //clear clusterIndex
+  //free(fileEntry);
   ret = close(fileInfo->fh);
   if (ret == -1)
     return -errno;
