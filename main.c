@@ -93,18 +93,20 @@ static struct fusedPcapConfig_s {
   int clustermode;
   int clusterabend;
   int blockslack;
+  int keepcache;
 } fusedPcapConfig;
 
 // SUPPORT FUNCTIONS
 
 static void printConfigStruct(struct fusedPcapConfig_s *config)
 {
-  fprintf(stderr, "  %s: 0x%016llx\n  %s: %d  %s: %d\n  %s: %d  %s: %d\n",
+  fprintf(stderr, "  %s: 0x%016llx\n  %s: %d  %s: %d\n  %s: %d  %s: %d  %s\n",
           "filesize", (long long int) config->filesize,
           "clustersize", config->clustersize,
           "clusterabend", config->clusterabend,
           "clustermode", config->clustermode,
-          "blockslack", config->blockslack);
+          "blockslack", config->blockslack,
+          config->keepcache ? "keepcache: 1" : "");
 }
 
 static int convertValidateFilesize(off_t *size /*output*/, const char *input)
@@ -261,6 +263,14 @@ static int reapConfigDirs(const char *path, char **shortPath, struct fusedPcapCo
         *shortPath = strchr(*shortPath, '/');
         continue;
       }
+    }
+    if (strncmp("/keepcache", *shortPath, 10) == 0) {
+      *shortPath += 1;
+      fileConfig->keepcache = 1;
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "FUSED_PCAP_OPT: keepcache\n");
+      *shortPath = strchr(*shortPath, '/');
+      continue;
     }
     break;
   }
@@ -512,6 +522,8 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   ret = open(mountPath, fileInfo->flags);
   fileInfo->direct_io = 1;
   fileInfo->nonseekable = 1;
+  if (fileConfig.keepcache)
+    fileInfo->keep_cache = 1;
   if (ret == -1)
     return -errno;
 
@@ -862,9 +874,10 @@ enum {
   FUSED_PCAP_OPT_KEY_HELP,
   FUSED_PCAP_OPT_KEY_VERSION,
   FUSED_PCAP_OPT_KEY_DEBUG,
+  FUSED_PCAP_OPT_KEY_KEEPCACHE,
 };
 
-struct fusedPcapInputs_s {
+static struct fusedPcapInputs_s {
   char *filesize;
   char *clustermode;
   char *clusterabend;
@@ -888,6 +901,7 @@ static struct fuse_opt fusedPcapOptions[] = {
   FUSE_OPT_KEY("--version", FUSED_PCAP_OPT_KEY_VERSION),
   FUSE_OPT_KEY("debug",     FUSED_PCAP_OPT_KEY_DEBUG),
   FUSE_OPT_KEY("-d",        FUSED_PCAP_OPT_KEY_DEBUG),
+  FUSE_OPT_KEY("keepcache", FUSED_PCAP_OPT_KEY_KEEPCACHE),
 
   FUSE_OPT_END
 };
@@ -917,6 +931,10 @@ static int parseMountOptions(void *data, const char *arg, int key, struct fuse_a
   case FUSE_OPT_KEY_OPT:
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "FUSE_OPT: %s\n", arg);
+    break;
+  case FUSED_PCAP_OPT_KEY_KEEPCACHE:
+    fusedPcapConfig.keepcache = 1;
+    return 0;
     break;
   case FUSED_PCAP_OPT_KEY_HELP:
     fusedPcapInputs.help = 1;
