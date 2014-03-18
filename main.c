@@ -396,7 +396,6 @@ static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t fi
 
 static int fused_pcap_mknod(const char *path, mode_t mode, dev_t rdev)
 {
-  //TODO: finish
   (void)path;
   (void)mode;
   (void)rdev;
@@ -405,7 +404,6 @@ static int fused_pcap_mknod(const char *path, mode_t mode, dev_t rdev)
 
 static int fused_pcap_mkdir(const char *path, mode_t mode)
 {
-  //TODO: finish
   (void)path;
   (void)mode;
   return -EROFS;
@@ -413,21 +411,18 @@ static int fused_pcap_mkdir(const char *path, mode_t mode)
 
 static int fused_pcap_unlink(const char *path)
 {
-  //TODO: finish
   (void)path;
   return -EROFS;
 }
 
 static int fused_pcap_rmdir(const char *path)
 {
-  //TODO: finish
   (void)path;
   return -EROFS;
 }
 
 static int fused_pcap_symlink(const char *from, const char *to)
 {
-  //TODO: finish
   (void)from;
   (void)to;
   return -EROFS;
@@ -435,7 +430,6 @@ static int fused_pcap_symlink(const char *from, const char *to)
 
 static int fused_pcap_rename(const char *from, const char *to)
 {
-  //TODO: finish
   (void)from;
   (void)to;
   return -EROFS;
@@ -443,7 +437,6 @@ static int fused_pcap_rename(const char *from, const char *to)
 
 static int fused_pcap_link(const char *from, const char *to)
 {
-  //TODO: finish
   (void)from;
   (void)to;
   return -EROFS;
@@ -451,7 +444,6 @@ static int fused_pcap_link(const char *from, const char *to)
 
 static int fused_pcap_chmod(const char *path, mode_t mode)
 {
-  //TODO: finish
   (void)path;
   (void)mode;
   return -EROFS;
@@ -459,7 +451,6 @@ static int fused_pcap_chmod(const char *path, mode_t mode)
 
 static int fused_pcap_chown(const char *path, uid_t uid, gid_t gid)
 {
-  //TODO: finish
   (void)path;
   (void)uid;
   (void)gid;
@@ -468,7 +459,6 @@ static int fused_pcap_chown(const char *path, uid_t uid, gid_t gid)
 
 static int fused_pcap_truncate(const char *path, off_t size)
 {
-  //TODO: finish
   (void)path;
   (void)size;
   return -EROFS;
@@ -476,7 +466,6 @@ static int fused_pcap_truncate(const char *path, off_t size)
 
 static int fused_pcap_utime(const char *path, struct utimbuf *timeBuffer)
 {
-  //TODO: finish
   (void)path;
   (void)timeBuffer;
   return -EROFS;
@@ -648,7 +637,6 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
 
 static int fused_pcap_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fileInfo)
 {
-  //TODO: finish
   (void)path;
   (void)buffer;
   (void)size;
@@ -659,7 +647,6 @@ static int fused_pcap_write(const char *path, const char *buffer, size_t size, o
 
 static int fused_pcap_statfs(const char *path, struct statvfs *status)
 {
-  //TODO: finish
   (void)path;
   (void)status;
   if (fusedPcapGlobal.debug)
@@ -712,7 +699,6 @@ static int fused_pcap_release(const char *path, struct fuse_file_info *fileInfo)
 
 static int fused_pcap_fsync(const char *path, int dummy, struct fuse_file_info *fileInfo)
 {
-  //TODO: finish
   (void)path;
   (void)dummy;
   (void)fileInfo;
@@ -721,7 +707,6 @@ static int fused_pcap_fsync(const char *path, int dummy, struct fuse_file_info *
 
 static int fused_pcap_access(const char *path, int mode)
 {
-  //TODO: finish
   char mountPath[PATH_MAX + 1];
   struct fusedPcapConfig_s fileConfig;
   char *shortPath;
@@ -750,7 +735,6 @@ static int fused_pcap_access(const char *path, int mode)
 
 static int fused_pcap_setxattr(const char *path, const char *name, const char *value, size_t size, int flags)
 {
-  //TODO: finish
   (void)path;
   (void)name;
   (void)value;
@@ -760,7 +744,6 @@ static int fused_pcap_setxattr(const char *path, const char *name, const char *v
 
 static int fused_pcap_getxattr(const char *path, const char *name, char *value, size_t size)
 {
-  //TODO: finish
   char mountPath[PATH_MAX + 1];
   struct fusedPcapConfig_s fileConfig;
   char *shortPath;
@@ -771,7 +754,6 @@ static int fused_pcap_getxattr(const char *path, const char *name, char *value, 
   (void)value;
   (void)size;
 
-  //TODO:
   if (reapConfigDirs(path, &shortPath, &fileConfig))
     return -ENOENT;
   if (fusedPcapGlobal.debug)
@@ -803,7 +785,6 @@ static int fused_pcap_listxattr(const char *path, char *list, size_t size)
 
 static int fused_pcap_removexattr(const char *path, const char *name)
 {
-  //TODO: finish
   (void)path;
   (void)name;
   return -EROFS;
