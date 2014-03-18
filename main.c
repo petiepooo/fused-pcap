@@ -317,13 +317,49 @@ static int fused_pcap_readlink(const char *path, char *buffer, size_t size)
 
 static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fillInfo)
 {
-  //TODO: finish
-  (void)path;
-  (void)buffer;
-  (void)filler;
+  char mountPath[PATH_MAX + 1];
+  struct fusedPcapConfig_s fileConfig;
+  char *shortPath;
+  //char *endFile;
+  DIR *directory;
+  struct dirent *entry;
+  struct stat status;
+
   (void)offset;
   (void)fillInfo;
-  return -EROFS;
+
+  if (reapConfigDirs(path, &shortPath, &fileConfig))
+    return -ENOENT;
+  if (fusedPcapGlobal.debug)
+    printConfigStruct(&fileConfig);
+
+  if (! shortPath)
+    shortPath = "/";
+  snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
+
+  directory = opendir(mountPath);
+  if (directory == NULL)
+    return -errno;
+
+  while ((entry = readdir(directory)) != NULL) {
+    memset(&status, 0, sizeof(struct stat));
+    status.st_ino = entry->d_ino;
+    status.st_mode = entry->d_type << 12;
+    if (filler(buffer, entry->d_name, &status, 0))
+      break;
+  }
+
+  closedir(directory);
+
+  //add special files
+  //memset(&status, 0, sizeof(struct stat));
+  //status.st_ino = 999990;
+  //status.st_mode = S_IRUSR | S_IRGRP | S_IROTH;
+  //filler(buffer, "..status",  &status, 0);
+  //if (fileIsOpen(mountPath))
+    //filler(buffer, "..pids", &status, 0);
+
+  return 0;
 }
 
 static int fused_pcap_mknod(const char *path, mode_t mode, dev_t rdev)
@@ -648,9 +684,30 @@ static int fused_pcap_fsync(const char *path, int dummy, struct fuse_file_info *
 static int fused_pcap_access(const char *path, int mode)
 {
   //TODO: finish
-  (void)path;
-  (void)mode;
-  return -EROFS;
+  char mountPath[PATH_MAX + 1];
+  struct fusedPcapConfig_s fileConfig;
+  char *shortPath;
+  //char *endFile;
+
+  //TODO:
+  //if (isSpecialFile(path)
+    //return the file's stData
+  //if (isInCache(path)
+    //return the cached stData
+
+  if (reapConfigDirs(path, &shortPath, &fileConfig))
+    return -ENOENT;
+  if (fusedPcapGlobal.debug)
+    printConfigStruct(&fileConfig);
+
+  if (! shortPath)
+    shortPath = "/";
+  snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
+
+  if (access(mountPath, mode) == -1)
+    return -errno;
+
+  return 0;
 }
 
 static int fused_pcap_setxattr(const char *path, const char *name, const char *value, size_t size, int flags)
