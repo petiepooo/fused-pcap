@@ -275,18 +275,40 @@ static int isSpecialFile(const char *path)
   return 0;
 }
 
+static int separateEndingFile(char **fullPath, char **firstFile)
+{
+  char *delimiter;
+
+  delimiter = strstr(*fullPath, "..");
+  if (delimiter) {
+    //NOTE: this will break if there are actual subdirectories under the mountpoint
+    *delimiter++ = '\0';
+    *delimiter = '/';
+    if (firstFile != NULL) {
+      if (firstFile != fullPath) {
+        //fullPath points toward end, first toward first
+        *firstFile = *fullPath;
+        *fullPath = delimiter;
+      }
+      //unless they're the same, where end file is just truncated
+    }
+    else
+      //if firstFile isn't given, just endfile is returned
+      *fullPath = delimiter;
+    return 1;
+  }
+  return 0;
+}
+
 static int fused_pcap_getattr(const char *path, struct stat *stData)
 {
   char mountPath[PATH_MAX + 1];
   struct fusedPcapConfig_s fileConfig;
   char *shortPath;
-  //char *endFile;
 
   //TODO:
   //if (isSpecialFile(path)
     //return the file's stData
-  //if (isInCache(path)
-    //return the cached stData
 
   //first time calling, build cache entry
   if (reapConfigDirs(path, &shortPath, &fileConfig))
@@ -294,11 +316,11 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
   if (fusedPcapGlobal.debug)
     printConfigStruct(&fileConfig);
 
+  separateEndingFile(&shortPath, &shortPath);
+
   if (! shortPath)
     shortPath = "/";
   snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
-
-  //TODO: separateEndingFile(&shortPath, &endFile);
 
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "getattr calling stat for %s\n", mountPath);
@@ -751,6 +773,8 @@ static int fused_pcap_getxattr(const char *path, const char *name, char *value, 
 
   if (isSpecialFile(shortPath))
     return 0;  // extended attributes are not aupported on virtual files
+
+  separateEndingFile(&shortPath, &shortPath);
 
   if (! shortPath)
     shortPath = "/";
