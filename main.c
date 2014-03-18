@@ -325,7 +325,7 @@ static int fused_pcap_readlink(const char *path, char *buffer, size_t size)
   return -EROFS;
 }
 
-static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fillInfo)
+static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fileInfo)
 {
   char mountPath[PATH_MAX + 1];
   struct fusedPcapConfig_s fileConfig;
@@ -336,7 +336,7 @@ static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t fi
   struct stat status;
 
   (void)offset;
-  (void)fillInfo;
+  (void)fileInfo;
 
   if (reapConfigDirs(path, &shortPath, &fileConfig))
     return -ENOENT;
