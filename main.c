@@ -114,11 +114,14 @@ static int convertValidateFilesize(off_t *size /*output*/, const char *input)
   else {
     off_t multiplier;
 
-    multiplier = 1ll;
     suffix = input;
     while (isdigit(suffix[0]))
       suffix++;
     switch (suffix[0]) {
+    case '\0':
+    case '/':
+      multiplier = 1ll;
+      break;
     case 'K':
     case 'k':
       multiplier = 1024ll;
@@ -140,6 +143,7 @@ static int convertValidateFilesize(off_t *size /*output*/, const char *input)
       multiplier = 1024ll * 1024 * 1024 * 1024 * 1024;
       break;
     default:
+      return 1;
       break;
     }
 
