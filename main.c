@@ -307,8 +307,9 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
   char *shortPath;
 
   //TODO:
-  //if (isSpecialFile(path)
+  if (isSpecialFile(path)) {
     //return the file's stData
+  }
 
   //first time calling, build cache entry
   if (reapConfigDirs(path, &shortPath, &fileConfig))
@@ -478,8 +479,9 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   char *shortPath;
   int ret;
   
-  //if (isSpecialFile(path)
+  if (isSpecialFile(path)) {
     //return the file's fd
+  }
 
   if (reapConfigDirs(path, &shortPath, &fileConfig))
     return -ENOENT;
@@ -713,8 +715,9 @@ static int fused_pcap_access(const char *path, int mode)
   //char *endFile;
 
   //TODO:
-  //if (isSpecialFile(path)
+  if (isSpecialFile(path)) {
     //return the file's stData
+  }
   //if (isInCache(path)
     //return the cached stData
 
