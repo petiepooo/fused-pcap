@@ -254,7 +254,7 @@ static int reapConfigDirs(const char *path, char **shortPath, struct fusedPcapCo
         *shortPath = strchr(*shortPath, '/');
         continue;
       }
-      if (strncmp("abend=",* shortPath + 8, 6) == 0) {
+      if (strncmp("abend=", *shortPath + 8, 6) == 0) {
         *shortPath += 14;
         if (convertValidateClusterabend(&fileConfig->clusterabend, *shortPath))
           return 1;
@@ -280,6 +280,9 @@ static int isSpecialFile(const char *path)
 static int separateEndingFile(char **fullPath, char **firstFile)
 {
   char *delimiter;
+
+  if (! *fullPath)
+    return 0;
 
   delimiter = strstr(*fullPath, "..");
   if (delimiter) {
