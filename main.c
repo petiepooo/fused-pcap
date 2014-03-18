@@ -397,6 +397,14 @@ static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t fi
   return 0;
 }
 
+static int fused_pcap_create(const char *path, mode_t mode, struct fuse_file_info *fileInfo)
+{
+  (void)path;
+  (void)mode;
+  (void)fileInfo;
+  return -EROFS;
+}
+
 static int fused_pcap_mknod(const char *path, mode_t mode, dev_t rdev)
 {
   (void)path;
@@ -803,6 +811,7 @@ struct fuse_operations callbackOperations = {
   .access      = fused_pcap_access,
   .readlink    = fused_pcap_readlink,
   .readdir     = fused_pcap_readdir,
+  .create      = fused_pcap_create,
   .mknod       = fused_pcap_mknod,
   .mkdir       = fused_pcap_mkdir,
   .symlink     = fused_pcap_symlink,
