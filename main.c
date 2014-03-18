@@ -467,10 +467,10 @@ static int fused_pcap_truncate(const char *path, off_t size)
   return -EROFS;
 }
 
-static int fused_pcap_utime(const char *path, struct utimbuf *timeBuffer)
+static int fused_pcap_utimens(const char *path, const struct timespec timeSpec[2])
 {
   (void)path;
-  (void)timeBuffer;
+  (void)timeSpec;
   return -EROFS;
 }
 
@@ -813,7 +813,7 @@ struct fuse_operations callbackOperations = {
   .chmod       = fused_pcap_chmod,
   .chown       = fused_pcap_chown,
   .truncate    = fused_pcap_truncate,
-  .utime       = fused_pcap_utime,
+  .utimens     = fused_pcap_utimens,
   .open        = fused_pcap_open,
   .read        = fused_pcap_read,
   .write       = fused_pcap_write,
