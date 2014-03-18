@@ -35,7 +35,7 @@ static const char *fusedPcapVersion = "0.0.2a";
 #include <ctype.h>
 #include <string.h>
 #include <sys/xattr.h>
-//#include <sys/statvfs.h>
+#include <sys/statvfs.h>
 #include <errno.h>
 //#include <assert.h>
 #include <dirent.h>
@@ -662,7 +662,13 @@ static int fused_pcap_statfs(const char *path, struct statvfs *status)
   //TODO: finish
   (void)path;
   (void)status;
-  return -EROFS;
+  if (fusedPcapGlobal.debug)
+    fprintf(stderr, "receiving statfs for %s\n", path);
+  if (statvfs(fusedPcapGlobal.pcapDirectory, status) != 0)
+    return -errno;
+  status->f_blocks = status->f_blocks - status->f_bfree;
+  status->f_bfree = status->f_bavail = 0;
+  return 0;
 }
 
 static int fused_pcap_release(const char *path, struct fuse_file_info *fileInfo)
