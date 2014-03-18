@@ -34,7 +34,9 @@ static const char *fusedPcapVersion = "0.0.2a";
 #include <limits.h>
 #include <ctype.h>
 #include <string.h>
+#ifdef HAVE_SETXATTR
 #include <sys/xattr.h>
+#endif
 #include <sys/statvfs.h>
 #include <errno.h>
 //#include <assert.h>
@@ -736,6 +738,7 @@ static int fused_pcap_access(const char *path, int mode)
   return 0;
 }
 
+#ifdef HAVE_SETXATTR
 static int fused_pcap_setxattr(const char *path, const char *name, const char *value, size_t size, int flags)
 {
   (void)path;
@@ -792,18 +795,20 @@ static int fused_pcap_removexattr(const char *path, const char *name)
   (void)name;
   return -EROFS;
 }
+#endif
 
 
 struct fuse_operations callbackOperations = {
   .getattr     = fused_pcap_getattr,
+  .access      = fused_pcap_access,
   .readlink    = fused_pcap_readlink,
   .readdir     = fused_pcap_readdir,
   .mknod       = fused_pcap_mknod,
   .mkdir       = fused_pcap_mkdir,
   .symlink     = fused_pcap_symlink,
-  .rename      = fused_pcap_rename,
   .unlink      = fused_pcap_unlink,
   .rmdir       = fused_pcap_rmdir,
+  .rename      = fused_pcap_rename,
   .link        = fused_pcap_link,
   .chmod       = fused_pcap_chmod,
   .chown       = fused_pcap_chown,
@@ -815,11 +820,12 @@ struct fuse_operations callbackOperations = {
   .statfs      = fused_pcap_statfs,
   .release     = fused_pcap_release,
   .fsync       = fused_pcap_fsync,
-  .access      = fused_pcap_access,
+#ifdef HAVE_SETXATTR
   .setxattr    = fused_pcap_setxattr,
   .getxattr    = fused_pcap_getxattr,
   .listxattr   = fused_pcap_listxattr,
-  .removexattr = fused_pcap_removexattr
+  .removexattr = fused_pcap_removexattr,
+#endif
 };
 
 static void usage(const char *progname)
