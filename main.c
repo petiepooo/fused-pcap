@@ -507,6 +507,8 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "open calling open for %s\n", mountPath);
   ret = open(mountPath, fileInfo->flags);
+  fileInfo->direct_io = 1;
+  fileInfo->nonseekable = 1;
   if (ret == -1)
     return -errno;
 
@@ -934,7 +936,6 @@ static int parseMountOptions(void *data, const char *arg, int key, struct fuse_a
 int main (int argc, char *argv[])
 {
   struct fuse_args fuseArgs = FUSE_ARGS_INIT(argc, argv);
-  //struct fuse_args moreArgs = FUSE_ARGS_INIT(0, NULL);
 
   if ((fuse_opt_parse(&fuseArgs, &fusedPcapInputs, fusedPcapOptions, parseMountOptions)) == -1) {
     fprintf(stderr, "%s: invalid arguments\n", argv[0]);
@@ -942,10 +943,6 @@ int main (int argc, char *argv[])
   }
   if (!fusedPcapInputs.help)
   {
-
-    //TODO: add read-only option if needed
-    //fuse_opt_add_arg (&moreArgs, "-oro");
-    //fuse_opt_parse(&moreArgs, &fusedPcapConfig, fusedPcapOptions, parseMountOptions);
 
     // convert and validate options
     if (convertValidateFilesize(&fusedPcapConfig.filesize, fusedPcapInputs.filesize)) {
