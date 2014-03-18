@@ -34,7 +34,7 @@ static const char *fusedPcapVersion = "0.0.2a";
 #include <limits.h>
 #include <ctype.h>
 #include <string.h>
-//#include <sys/xattr.h>
+#include <sys/xattr.h>
 //#include <sys/statvfs.h>
 #include <errno.h>
 //#include <assert.h>
@@ -262,6 +262,16 @@ static int reapConfigDirs(const char *path, char **shortPath, struct fusedPcapCo
     }
     break;
   }
+  return 0;
+}
+
+static int isSpecialFile(const char *path)
+{
+  if (strncmp("..", path, 2) == 0)
+    if ((strncmp("status", path + 2, 6) == 0) ||
+        (strncmp("last", path + 2, 4) == 0) ||
+        (strncmp("next", path + 2, 4) == 0))
+      return 1;
   return 0;
 }
 
@@ -723,11 +733,33 @@ static int fused_pcap_setxattr(const char *path, const char *name, const char *v
 static int fused_pcap_getxattr(const char *path, const char *name, char *value, size_t size)
 {
   //TODO: finish
-  (void)path;
+  char mountPath[PATH_MAX + 1];
+  struct fusedPcapConfig_s fileConfig;
+  char *shortPath;
+  //char *endFile;
+  int response;
+
   (void)name;
   (void)value;
   (void)size;
-  return -EROFS;
+
+  //TODO:
+  if (reapConfigDirs(path, &shortPath, &fileConfig))
+    return -ENOENT;
+  if (fusedPcapGlobal.debug)
+    printConfigStruct(&fileConfig);
+
+  if (isSpecialFile(shortPath))
+    return 0;  // extended attributes are not aupported on virtual files
+
+  if (! shortPath)
+    shortPath = "/";
+  snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
+
+  response = lgetxattr(mountPath, name, value, size);
+  if (response == -1)
+    return -errno;
+  return response;
 }
 
 static int fused_pcap_listxattr(const char *path, char *list, size_t size)
