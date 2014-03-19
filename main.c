@@ -41,6 +41,7 @@ static const char *fusedPcapVersion = "0.0.2a";
 #include <errno.h>
 //#include <assert.h>
 #include <dirent.h>
+#include <pthread.h>
 #include <syslog.h>
 #include <fuse.h>
 
@@ -97,6 +98,9 @@ static struct fusedPcapConfig_s {
   int keepcache;
 } fusedPcapConfig;
 
+// this mutex protects the array belowr; pid indicates whether an entry is free or not.
+pthread_mutex_t instanceMutex = PTHREAD_MUTEX_INITIALIZER;
+
 static struct fusedPcapInstance_s {
   pid_t pid;
   char *shortPath; // allocated with strdup; must be freed when pid cleared
@@ -122,6 +126,9 @@ static struct fusedPcapInstance_s {
     };
   };
 } fusedPcapInstances[MAX_CLUSTER_SIZE];
+
+// this mutex protects reads from the file into the cluster queue
+pthread_mutex_t readqueueMutex = PTHREAD_MUTEX_INITIALIZER;
 
 // SUPPORT FUNCTIONS
 
@@ -340,15 +347,20 @@ static struct fusedPcapInstance_s *populateInstance(const char *shortPath, struc
   struct fusedPcapInstance_s *instance;
   int i;
 
+  context = fuse_get_context();
+
+  //need to protect fusedPcapInstances array allocation with mutex
+  pthread_mutex_lock(&instanceMutex);
   for (i=0; i<MAX_CLUSTER_SIZE; i++)
     if (fusedPcapInstances[i].pid == 0)
       break;
   if (i == MAX_CLUSTER_SIZE)
     return NULL;
   instance = &fusedPcapInstances[i];
-
-  context = fuse_get_context();
   instance->pid = context->pid;
+  //once pid is non-zero, other threads will skip the entry, so release mutex
+  pthread_mutex_unlock(&instanceMutex);
+
   //NOTE: if strdup fails, this is set to NULL; always verify before dereferencing
   instance->shortPath = strdup(shortPath);
   //readFile populated by caller
@@ -368,6 +380,7 @@ static struct fusedPcapInstance_s *findInstance(void)
   struct fuse_context *context;
   int i;
 
+  //this is read-only, no need to protect with a mutex
   context = fuse_get_context();
   for (i=0; i<MAX_CLUSTER_SIZE; i++)
     if (fusedPcapInstances[i].pid == context->pid)
@@ -375,14 +388,26 @@ static struct fusedPcapInstance_s *findInstance(void)
   return NULL;
 }
 
-static void setInstance(struct fuse_file_info *fileInfo, struct fusedPcapInstance_s *instance)
+static inline void clearInstance(struct fusedPcapInstance_s *instance)
 {
-  fileInfo->fh = (uint64_t)instance;
+  //protect this whole operation with a mutex
+  pthread_mutex_lock(&instanceMutex);
+  if(instance->shortPath)
+    free(instance->shortPath);
+  if(instance->readFile)
+    free(instance->readFile);
+  memset(instance, '\0', sizeof(struct fusedPcapInstance_s));
+  pthread_mutex_unlock(&instanceMutex);
 }
 
-static struct fusedPcapInstance_s *getInstance(struct fuse_file_info *fileInfo)
+static inline void setInstance(struct fuse_file_info *fileInfo, struct fusedPcapInstance_s *instance)
 {
-  return (struct fusedPcapInstance_s *)fileInfo->fh;
+  fileInfo->fh = (uint64_t)instance;  //masking only, no mutex needed
+}
+
+static inline struct fusedPcapInstance_s *getInstance(struct fuse_file_info *fileInfo)
+{
+  return (struct fusedPcapInstance_s *)fileInfo->fh;  //masking only, no mutex needed
 }
 
 // FUSE CALLBACKS
@@ -644,9 +669,7 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
     fprintf(stderr, "open calling open for %s\n", mountPath);
   ret = open(mountPath, fileInfo->flags);
   if (ret == -1) {
-    instance->pid = 0;
-    if(instance->shortPath)
-      free(instance->shortPath);
+    clearInstance(instance);
     return -errno;
   }
   fileInfo->direct_io = 1;
@@ -655,9 +678,7 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
     fileInfo->keep_cache = 1;
 
   if (stat(mountPath, &instance->stData) == -1) {
-    instance->pid = 0;
-    if(instance->shortPath)
-      free(instance->shortPath);
+    clearInstance(instance);
     return -errno;
   }
   instance->stData.st_size = instance->config.filesize;
@@ -871,11 +892,7 @@ static int fused_pcap_release(const char *path, struct fuse_file_info *fileInfo)
   instance = getInstance(fileInfo);
   if (instance == NULL)
     return -EBADF;  // fuse fd passed between pids, or process forked? look up based on name and offset?
-  if(instance->shortPath)
-    free(instance->shortPath);
-  if(instance->readFile)
-    free(instance->readFile);
-  memset(instance, '\0', sizeof(struct fusedPcapInstance_s));
+  clearInstance(instance);
 
   if (ret == -1)
     return -errno;
