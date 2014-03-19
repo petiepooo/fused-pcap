@@ -41,6 +41,7 @@ static const char *fusedPcapVersion = "0.0.2a";
 #include <errno.h>
 //#include <assert.h>
 #include <dirent.h>
+#include <syslog.h>
 #include <fuse.h>
 
 // DEFAULT VALUES AND CONSTRAINTS
@@ -382,6 +383,21 @@ static void setInstance(struct fuse_file_info *fileInfo, struct fusedPcapInstanc
 static struct fusedPcapInstance_s *getInstance(struct fuse_file_info *fileInfo)
 {
   return (struct fusedPcapInstance_s *)fileInfo->fh;
+}
+
+// FUSE CALLBACKS
+
+static void *fused_pcap_init(struct fuse_conn_info *conn)
+{
+  (void) conn;
+  syslog(LOG_INFO, "fused_pcap initialized");
+  return NULL;
+}
+
+static void fused_pcap_destroy(void *privateData)
+{
+  (void) privateData;
+  syslog(LOG_INFO, "fused_pcap exiting");
 }
 
 static int fused_pcap_getattr(const char *path, struct stat *stData)
@@ -954,6 +970,8 @@ static int fused_pcap_removexattr(const char *path, const char *name)
 
 
 struct fuse_operations callbackOperations = {
+  .init        = fused_pcap_init,
+  .destroy     = fused_pcap_destroy,
   .getattr     = fused_pcap_getattr,
   .access      = fused_pcap_access,
   .readlink    = fused_pcap_readlink,
@@ -1131,6 +1149,8 @@ int main (int argc, char *argv[])
       fprintf(stderr, "Parameters validated, calling fuse_main()\n");
     }
   }
+
+  openlog(NULL, LOG_PID, LOG_DAEMON);
 
 #if FUSE_VERSION >= 26
   return fuse_main(fuseArgs.argc, fuseArgs.argv, &callbackOperations, NULL);
