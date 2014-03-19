@@ -460,18 +460,12 @@ static int fused_pcap_readlink(const char *path, char *buffer, size_t size)
   return -EROFS;
 }
 
-static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fileInfo)
+static int fused_pcap_opendir(const char *path, struct fuse_file_info *fileInfo)
 {
   char mountPath[PATH_MAX + 1];
   struct fusedPcapConfig_s fileConfig;
   char *shortPath;
-  //char *endFile;
-  DIR *directory;
-  struct dirent *entry;
-  struct stat status;
 
-  (void)offset;
-  (void)fileInfo;
 
   if (reapConfigDirs(path, &shortPath, &fileConfig))
     return -ENOENT;
@@ -482,19 +476,29 @@ static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t fi
     shortPath = "/";
   snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
 
-  directory = opendir(mountPath);
-  if (directory == NULL)
+  fileInfo->fh = (uint64_t)opendir(mountPath);
+  if (fileInfo->fh == 0)
     return -errno;
 
-  while ((entry = readdir(directory)) != NULL) {
+  return 0;
+}
+
+static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fileInfo)
+{
+  struct dirent *entry;
+  struct stat status;
+
+  (void)path;  // should not use if flag_nopath is set
+  (void)offset;
+  (void)fileInfo;
+
+  while ((entry = readdir((DIR *)fileInfo->fh)) != NULL) {
     memset(&status, 0, sizeof(struct stat));
     status.st_ino = entry->d_ino;
     status.st_mode = entry->d_type << 12;
     if (filler(buffer, entry->d_name, &status, 0))
       break;
   }
-
-  closedir(directory);
 
   //add special files
   //memset(&status, 0, sizeof(struct stat));
@@ -504,6 +508,15 @@ static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t fi
   //if (fileIsOpen(mountPath))
     //filler(buffer, "..pids", &status, 0);
 
+  return 0;
+}
+
+static int fused_pcap_releasedir(const char *path, struct fuse_file_info *fileInfo)
+{
+  (void)path;  // should not use if flag_nopath is set
+
+  if (closedir((DIR *)fileInfo->fh) != 0)
+    return -errno;
   return 0;
 }
 
@@ -676,6 +689,8 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
   ssize_t sizeRes;
   struct fusedPcapInstance_s *instance;
 
+  (void)path;  // should not use if flag_nopath is set
+
   //TODO: finish
 
   instance = getInstance(fileInfo);
@@ -797,7 +812,7 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
 
 static int fused_pcap_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fileInfo)
 {
-  (void)path;
+  (void)path;  // should not use if flag_nopath is set
   (void)buffer;
   (void)size;
   (void)offset;
@@ -824,7 +839,7 @@ static int fused_pcap_release(const char *path, struct fuse_file_info *fileInfo)
   int ret;
 
   //TODO: finish
-  (void)path;
+  (void)path;  // should not use if flag_nopath is set
   //fileEntry = (struct fileEntry_t *)fileInfo->fh;
   //if (fileEntry->fd)
     //ret = close(fileEntry->fd);
@@ -869,7 +884,7 @@ static int fused_pcap_release(const char *path, struct fuse_file_info *fileInfo)
 
 static int fused_pcap_fsync(const char *path, int dummy, struct fuse_file_info *fileInfo)
 {
-  (void)path;
+  (void)path;  // should not use if flag_nopath is set
   (void)dummy;
   (void)fileInfo;
   return -EROFS;
@@ -975,7 +990,9 @@ struct fuse_operations callbackOperations = {
   .getattr     = fused_pcap_getattr,
   .access      = fused_pcap_access,
   .readlink    = fused_pcap_readlink,
+  .opendir     = fused_pcap_opendir,
   .readdir     = fused_pcap_readdir,
+  .releasedir  = fused_pcap_releasedir,
   .create      = fused_pcap_create,
   .mknod       = fused_pcap_mknod,
   .mkdir       = fused_pcap_mkdir,
@@ -999,6 +1016,9 @@ struct fuse_operations callbackOperations = {
   .getxattr    = fused_pcap_getxattr,
   .listxattr   = fused_pcap_listxattr,
   .removexattr = fused_pcap_removexattr,
+#endif
+#if FUSE_MAJOR_VERSION > 2 || ( FUSE_MAJOR_VERSION == 2 && FUSE_MINOR_VERSION >= 9 )
+  .flag_nopath = 1,
 #endif
 };
 
