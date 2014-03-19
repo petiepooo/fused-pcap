@@ -874,6 +874,11 @@ static int fused_pcap_access(const char *path, int mode)
   if (fusedPcapGlobal.debug)
     printConfigStruct(&fileConfig);
 
+  if (separateEndingFile(&shortPath, &shortPath)) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "ending file detected but ignored\n");
+  }
+
   if (! shortPath)
     shortPath = "/";
   snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
