@@ -19,9 +19,8 @@
  */
 
 #define FUSE_USE_VERSION	26
-#define _FILE_OFFSET_BITS	64
 
-static const char *fusedPcapVersion = "0.0.2a";
+static const char *fusedPcapVersion = "0.0.3a";
 
 #include <stdlib.h>
 #include <unistd.h>
