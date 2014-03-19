@@ -348,8 +348,8 @@ static struct fusedPcapInstance_s *populateInstance(const char *shortPath, struc
 
   context = fuse_get_context();
   instance->pid = context->pid;
+  //NOTE: if strdup fails, this is set to NULL; always verify before dereferencing
   instance->shortPath = strdup(shortPath);
-  //TODO: check for NULL return
   //readFile populated by caller
   //fd populated by caller
   instance->readOffset = 0ll;
@@ -616,7 +616,8 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   ret = open(mountPath, fileInfo->flags);
   if (ret == -1) {
     instance->pid = 0;
-    free(instance->shortPath);
+    if(instance->shortPath)
+      free(instance->shortPath);
     return -errno;
   }
   fileInfo->direct_io = 1;
@@ -626,13 +627,14 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
 
   if (stat(mountPath, &instance->stData) == -1) {
     instance->pid = 0;
-    free(instance->shortPath);
+    if(instance->shortPath)
+      free(instance->shortPath);
     return -errno;
   }
   instance->stData.st_size = instance->config.filesize;
   instance->fd = ret;
+  //NOTE: if strdup fails, this is set to NULL; always verify before dereferencing
   instance->readFile = strdup(mountPath);
-  //TODO: check for NULL return
   setInstance(fileInfo, instance);
 
   //TODO: 
@@ -734,7 +736,7 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "EOF detected, comparing %s and %s\n", instance->readFile, instance->endFile);
 
-    if (strcmp(instance->readFile, instance->endFile) == 0) {
+    if (instance->readFile && strcmp(instance->readFile, instance->endFile) == 0) {
       if (fusedPcapGlobal.debug)
         fprintf(stderr, "EOF detected on ending file, returning 0 bytes\n");
       instance->normalEnding = 1;
@@ -838,8 +840,10 @@ static int fused_pcap_release(const char *path, struct fuse_file_info *fileInfo)
   instance = getInstance(fileInfo);
   if (instance == NULL)
     return -EBADF;  // fuse fd passed between pids, or process forked? look up based on name and offset?
-  free(instance->shortPath);
-  free(instance->readFile);
+  if(instance->shortPath)
+    free(instance->shortPath);
+  if(instance->readFile)
+    free(instance->readFile);
   memset(instance, '\0', sizeof(struct fusedPcapInstance_s));
 
   if (ret == -1)
