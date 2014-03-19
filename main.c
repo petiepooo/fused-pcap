@@ -645,6 +645,12 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
 
   //TODO: check fileInfo->flags for inappropriate values
 
+  if (fileInfo->flags & (O_CREAT | O_WRONLY)) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "open detected O_CREAT or O_WRONLY flags in %x, returning EROFS\n", fileInfo->flags);
+    return -EROFS;
+  }
+
   if (reapConfigDirs(path, &shortPath, &fileConfig))
     return -ENOENT;
   if (fusedPcapGlobal.debug)
