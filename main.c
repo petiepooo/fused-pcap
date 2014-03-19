@@ -444,16 +444,18 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
 
   // lookup calling pid, check if file is already opened
   instance = findInstance();
-  if (instance) {
-  // if it is, we need to return the cached attributes, as we may have
-  // altered its virtual size or it may no longer exist.
+  if (instance && strcmp(shortPath, instance->shortPath) == 0) {
+    // if it is, we need to return the cached attributes, as we may have
+    // altered its virtual size or it may no longer exist.
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "getattr using cached stData for %s\n", shortPath);
     memcpy(stData, &instance->stData, sizeof(struct stat));
     return 0;
   }
 
   if (separateEndingFile(&shortPath, &shortPath)) {
     if (fusedPcapGlobal.debug)
-      fprintf(stderr, "ending file detected but ignored\n");
+      fprintf(stderr, "getattr detected ending file but ignored it\n");
   }
 
   if (! shortPath)
@@ -715,6 +717,7 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
   off_t offRes;
   ssize_t sizeRes;
   struct fusedPcapInstance_s *instance;
+  int clustersize;
 
   (void)path;  // should not use if flag_nopath is set
 
@@ -726,21 +729,21 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
   //if (fileEntry->readOffset != offset)
     //EINVAL? offset not suitably aligned
 
-  //if (instance->abortEof) {
-    //if (fusedPcapGlobal.debug)
-      //fprintf(stderr, "aborting cluster member %d before read with EOF\n", instance->clusterMember);
-    //instance->fileConfig.fileSize = instance->fileConfig.readOffset;
-    //instance->normalEnding = 1;
-    //return 0;
-  //}
-  //if (fileEntry->abortErr) {
-    //if (fusedPcapGlobal.debug)
-      //fprintf(stderr, "aborting cluster member %d before read with ENOENT\n", fileEntry->clusterMember);
-    //fileEntry->normalEnding = 1;
-    //return -ENOENT;  //is this the right error?
-  //}
+  if (instance->abortEof) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "aborting cluster member %d before read with EOF\n", instance->clusterMember);
+    instance->config.filesize = instance->readOffset;
+    instance->normalEnding = 1;
+    return 0;
+  }
+  if (instance->abortErr) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "aborting cluster member %d before read with ENOENT\n", instance->clusterMember);
+    instance->normalEnding = 1;
+    return -ENOENT;  //is this the right error?
+  }
 
-  //clustersize = fileEntry->fileConfig.clustersize;
+  clustersize = instance->config.clustersize;
   //if (clustersize > 1) {
     //clusterIndex = fileEntry->clusterIndex;
 
@@ -783,12 +786,23 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
   if (offRes != offset)
     return -errno;
 
-  //sizeRes = read(fileEntry->fd, buffer, size);
-  sizeRes = read(instance->fd, buffer, size);
-  if (sizeRes == -1)
-    return -errno;
-  if (fusedPcapGlobal.debug)
-    fprintf(stderr, "read returned %lli\n", (long long int) sizeRes);
+  if (instance->config.clustersize == 1) {
+    sizeRes = read(instance->fd, buffer, size);
+    if (sizeRes == -1)
+      return -errno;
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "read returned %lli\n", (long long int) sizeRes);
+
+    instance->readOffset += sizeRes;
+    instance->outputOffset += sizeRes;
+  }
+  else {
+    //read more from source file if there are no packets in our queue
+    //queue up the next contiguous group of 1 or more packets
+    //sizeRes = size in queue
+    //memcpy(buffer, queue offset, sizeRes);
+    //instance->outputOffset += sizeRes
+  }
 
   if (sizeRes == 0) {
     if (fusedPcapGlobal.debug)
@@ -798,42 +812,41 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
       if (fusedPcapGlobal.debug)
         fprintf(stderr, "EOF detected on ending file, returning 0 bytes\n");
       instance->normalEnding = 1;
-      instance->abortEof = 1;
       instance->config.filesize = instance->readOffset;
     }
 
-    //if (is the next one ready?) {
-      //close(fileEntry->fd);
-      //fileEntry->fd = NULL;
-      //if (fileEntry->fileEndEof) {
-        //if (fusedPcapGlobal.debug)
-          //fprintf(stderr, "setting cluster member %d to abort before next read with EOF\n", fileEntry->clusterMember);
-        //fileEntry->abortEof = 1;
-      //}
-      //else if (fileEntry->fileEndErr) {
-        //if (fusedPcapGlobal.debug)
-          //fprintf(stderr, "setting cluster member %d to abort before next read with an error\n", fileEntry->clusterMember);
-        //fileEntry->abortErr = 1;
-      //}
-      //else {
+    if ((clustersize == 1)) { //TODO: && nextFileReady()) || allClusterMembersCurrent()) {
+      if (instance->fileEndEof) {
+        if (fusedPcapGlobal.debug)
+          fprintf(stderr, "setting cluster member %d to abort before next read with EOF\n", instance->clusterMember);
+        //TODO: adjust instance's cached stData filesize?
+        instance->abortEof = 1;
+      }
+      else if (instance->fileEndErr) {
+        if (fusedPcapGlobal.debug)
+          fprintf(stderr, "aborting cluster member %d at EOF before next read\n", instance->clusterMember);
+        return -EINVAL;
+      }
+      else {
         if (fusedPcapGlobal.debug)
           fprintf(stderr, "TODO: close current file, open next, and continue\n");
         //close finished file, cleanup instance fields
+        //close(instance->fd);
         //instance->fd = open(nextFilePath, fileEntry->flags);
         //instance->readOffset = 0ll;
-        //verify but discard pcap header
-      //}
+        // free readFile string and dup from nextFilePath
+        //verify but discard pcap header from new file
+        //if (clustersize > 1)
+          //flush old cache and reread the new one.
+      }
+      //return -EAGAIN;
+    }
+    else if (0) { //TODO: (! non-blocking)
+      //block until more available (or just wait a few and retry) //TODO: figure out how to determine more is available
       // return -EAGAIN
-    //}
-    //else {
-      //if (! non-blocking)
-        //block until more available //TODO: figure out how to determine more is available
-      // return -EAGAIN
-    //}
+    }
   }
 
-  instance->readOffset += sizeRes;
-  instance->outputOffset += sizeRes;
   return sizeRes;
 }
 
