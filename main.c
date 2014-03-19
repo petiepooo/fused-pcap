@@ -81,7 +81,7 @@ enum {
 
 // GLOBAL STRUCTURES
 
-static struct {
+static struct fusedPcapGlobal_s {
   char pcapDirectory[PATH_MAX + 1];
   char mountDirectory[PATH_MAX + 1];
   int debug;
@@ -95,6 +95,32 @@ static struct fusedPcapConfig_s {
   int blockslack;
   int keepcache;
 } fusedPcapConfig;
+
+static struct fusedPcapInstance_s {
+  pid_t pid;
+  char *shortPath; // allocated with strdup; must be freed when pid cleared
+  char *readFile;  // allocated with strdup; must be freed when file closed
+  int fd;
+  off_t readOffset;
+  off_t outputOffset;
+  struct fusedPcapConfig_s config;
+  struct stat stData;
+  char endFile[PATH_MAX + 1];
+  // bitfields
+  union {
+    uint32_t bits;
+    struct {
+      uint32_t clusterMember: 5;
+      uint32_t padding: 3;
+      uint32_t normalEnding: 1;
+      uint32_t fileEndEof: 1;
+      uint32_t fileEndErr: 1;
+      uint32_t abortEof: 1;
+      uint32_t abortErr: 1;
+      uint32_t reserved: 19;
+    };
+  };
+} fusedPcapInstances[MAX_CLUSTER_SIZE];
 
 // SUPPORT FUNCTIONS
 
@@ -287,7 +313,8 @@ static int isSpecialFile(const char *path)
   return 0;
 }
 
-static int separateEndingFile(char **fullPath, char **firstFile)
+//NOTE: this function modifies the string in fullPath if it finds a ".." delimiter
+static int separateEndingFile(char **fullPath, char **endFile)
 {
   char *delimiter;
 
@@ -299,20 +326,62 @@ static int separateEndingFile(char **fullPath, char **firstFile)
     //NOTE: this will break if there are actual subdirectories under the mountpoint
     *delimiter++ = '\0';
     *delimiter = '/';
-    if (firstFile != NULL) {
-      if (firstFile != fullPath) {
-        //fullPath points toward end, first toward first
-        *firstFile = *fullPath;
-        *fullPath = delimiter;
-      }
-      //unless they're the same, where end file is just truncated
-    }
-    else
-      //if firstFile isn't given, just endfile is returned
-      *fullPath = delimiter;
+    if (endFile != NULL && endFile != fullPath)
+      *endFile = delimiter;
     return 1;
   }
   return 0;
+}
+
+static struct fusedPcapInstance_s *populateInstance(const char *shortPath, struct fusedPcapConfig_s *config)
+{
+  struct fuse_context *context;
+  struct fusedPcapInstance_s *instance;
+  int i;
+
+  for (i=0; i<MAX_CLUSTER_SIZE; i++)
+    if (fusedPcapInstances[i].pid == 0)
+      break;
+  if (i == MAX_CLUSTER_SIZE)
+    return NULL;
+  instance = &fusedPcapInstances[i];
+
+  context = fuse_get_context();
+  instance->pid = context->pid;
+  instance->shortPath = strdup(shortPath);
+  //TODO: check for NULL return
+  //readFile populated by caller
+  //fd populated by caller
+  instance->readOffset = 0ll;
+  instance->outputOffset = 0ll;
+  instance->endFile[0] = '\0';
+  memcpy(&instance->config, config, sizeof(struct fusedPcapConfig_s));
+  //stData cached by caller
+  instance->bits = 0;
+
+  return instance;
+}
+
+static struct fusedPcapInstance_s *findInstance(void)
+{
+  struct fuse_context *context;
+  int i;
+
+  context = fuse_get_context();
+  for (i=0; i<MAX_CLUSTER_SIZE; i++)
+    if (fusedPcapInstances[i].pid == context->pid)
+      return &fusedPcapInstances[i];
+  return NULL;
+}
+
+static void setInstance(struct fuse_file_info *fileInfo, struct fusedPcapInstance_s *instance)
+{
+  fileInfo->fh = (uint64_t)instance;
+}
+
+static struct fusedPcapInstance_s *getInstance(struct fuse_file_info *fileInfo)
+{
+  return (struct fusedPcapInstance_s *)fileInfo->fh;
 }
 
 static int fused_pcap_getattr(const char *path, struct stat *stData)
@@ -320,19 +389,31 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
   char mountPath[PATH_MAX + 1];
   struct fusedPcapConfig_s fileConfig;
   char *shortPath;
+  struct fusedPcapInstance_s *instance;
 
   //TODO:
   if (isSpecialFile(path)) {
     //return the file's stData
   }
 
-  //first time calling, build cache entry
   if (reapConfigDirs(path, &shortPath, &fileConfig))
     return -ENOENT;
   if (fusedPcapGlobal.debug)
     printConfigStruct(&fileConfig);
 
-  separateEndingFile(&shortPath, &shortPath);
+  // lookup calling pid, check if file is already opened
+  instance = findInstance();
+  if (instance) {
+  // if it is, we need to return the cached attributes, as we may have
+  // altered its virtual size or it may no longer exist.
+    memcpy(stData, &instance->stData, sizeof(struct stat));
+    return 0;
+  }
+
+  if (separateEndingFile(&shortPath, &shortPath)) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "ending file detected but ignored\n");
+  }
 
   if (! shortPath)
     shortPath = "/";
@@ -501,41 +582,64 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   struct fusedPcapConfig_s fileConfig;
   char *shortPath;
   int ret;
+  struct fusedPcapInstance_s *instance;
+  char *endFile;
   
   if (isSpecialFile(path)) {
     //return the file's fd
   }
+
+  //TODO: check fileInfo->flags for inappropriate values
 
   if (reapConfigDirs(path, &shortPath, &fileConfig))
     return -ENOENT;
   if (fusedPcapGlobal.debug)
     printConfigStruct(&fileConfig);
 
+  instance = populateInstance(shortPath, &fileConfig);
+  if (!instance)
+    return -EMFILE;
+
+  if (separateEndingFile(&shortPath, &endFile)) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "separate ending file detected: %s\n", endFile);
+  }
+
+  if (endFile && endFile != shortPath)
+    snprintf(instance->endFile, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, endFile);
   if (! shortPath)
     shortPath = "/";
   snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
 
-  //TODO: check fileInfo->flags for inappropriate values
-
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "open calling open for %s\n", mountPath);
   ret = open(mountPath, fileInfo->flags);
+  if (ret == -1) {
+    instance->pid = 0;
+    free(instance->shortPath);
+    return -errno;
+  }
   fileInfo->direct_io = 1;
   fileInfo->nonseekable = 1;
   if (fileConfig.keepcache)
     fileInfo->keep_cache = 1;
-  if (ret == -1)
-    return -errno;
 
-  //TODO: create new per-fh entry in array, store in fileInfo->fh_old
-  //allocate a new fileEntry
-  //memcpy(fileEntry->fileConfig, fileConfig, sizeof(struct fusedPcapConfig_t));
-  //strdup(fileEntry->shortPath, shortPath);
-  //strdup(fileEntry->fusePath, path);
-  //fileEntry->flags = fileInfo->flags;
-  //fileEntry->inputOffset = 0;
-  //fileEntry->readOffset = 0;
-  //fileEntry->fd = ret;
+  if (stat(mountPath, &instance->stData) == -1) {
+    instance->pid = 0;
+    free(instance->shortPath);
+    return -errno;
+  }
+  instance->stData.st_size = instance->config.filesize;
+  instance->fd = ret;
+  instance->readFile = strdup(mountPath);
+  //TODO: check for NULL return
+  setInstance(fileInfo, instance);
+
+  //TODO: 
+  // cache startfile's attributes to instance
+  //fileInfo->fh = instance;
+  //instance = getInstance(fileInfo
+
   //if (fileConfig.clustersize > 1)
     //find (or populate) clusterIndex
     //fileEntry->clusterIndex = clusterIndex;
@@ -545,9 +649,6 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
     //trip event
   //fileInfo->fh = (uint64_t)fileEntry;
 
-  if (fusedPcapGlobal.debug)
-    fprintf(stderr, "fd %x stored in fuse_file_info for %s\n", ret, mountPath);
-  fileInfo->fh = ret;
   return 0;
 }
 
@@ -555,18 +656,21 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
 {
   off_t offRes;
   ssize_t sizeRes;
+  struct fusedPcapInstance_s *instance;
 
   //TODO: finish
 
-  //fileEntry = (struct fileEntry_t *)fileInfo->fh;
+  instance = getInstance(fileInfo);
+  if (instance == NULL)
+    return -EBADF;  // fuse fd passed between pids, or process forked? look up based on name and offset?
   //if (fileEntry->readOffset != offset)
-    //ERROR? not a sequential read
+    //EINVAL? offset not suitably aligned
 
-  //if (fileEntry->abortEof) {
+  //if (instance->abortEof) {
     //if (fusedPcapGlobal.debug)
-      //fprintf(stderr, "aborting cluster member %d before read with EOF\n", fileEntry->clusterMember);
-    //fileEntry->fileConfig.fileSize = fileEntry->fileConfig.readOffset;
-    //fileEntry->normalEnding = 1;
+      //fprintf(stderr, "aborting cluster member %d before read with EOF\n", instance->clusterMember);
+    //instance->fileConfig.fileSize = instance->fileConfig.readOffset;
+    //instance->normalEnding = 1;
     //return 0;
   //}
   //if (fileEntry->abortErr) {
@@ -615,24 +719,29 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
   //}
   
   //offRes = lseek(fileEntry->fd, fileEntry->inputOffset, SEEK_SET);
-  offRes = lseek(fileInfo->fh, offset, SEEK_SET);
+  offRes = lseek(instance->fd, offset, SEEK_SET);
   if (offRes != offset)
     return -errno;
 
   //sizeRes = read(fileEntry->fd, buffer, size);
-  sizeRes = read(fileInfo->fh, buffer, size);
+  sizeRes = read(instance->fd, buffer, size);
   if (sizeRes == -1)
     return -errno;
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "read returned %lli\n", (long long int) sizeRes);
 
   if (sizeRes == 0) {
-    // at end of cuurent file. 
-    //is this lastFile?
-      //fileEntry->normalEnding = 1;
-      //fileEntry->abortEof = 1;
-      //fileEntry->fileConfig.fileSize = fileEntry->fileConfig.readOffset;
-      return 0;
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "EOF detected, comparing %s and %s\n", instance->readFile, instance->endFile);
+
+    if (strcmp(instance->readFile, instance->endFile) == 0) {
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "EOF detected on ending file, returning 0 bytes\n");
+      instance->normalEnding = 1;
+      instance->abortEof = 1;
+      instance->config.filesize = instance->readOffset;
+    }
+
     //if (is the next one ready?) {
       //close(fileEntry->fd);
       //fileEntry->fd = NULL;
@@ -647,9 +756,14 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
         //fileEntry->abortErr = 1;
       //}
       //else {
-        //fileEntry->fd = open(nextFilePath, fileEntry->flags);
-        //fileEntry->inputOffset
+        if (fusedPcapGlobal.debug)
+          fprintf(stderr, "TODO: close current file, open next, and continue\n");
+        //close finished file, cleanup instance fields
+        //instance->fd = open(nextFilePath, fileEntry->flags);
+        //instance->readOffset = 0ll;
+        //verify but discard pcap header
       //}
+      // return -EAGAIN
     //}
     //else {
       //if (! non-blocking)
@@ -657,11 +771,10 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
       // return -EAGAIN
     //}
   }
-  else {
-    //fileEntry->readOffset += sizeRes;
-    //fileEntry->inputOffset += sizeRes;
-    return sizeRes;
-  }
+
+  instance->readOffset += sizeRes;
+  instance->outputOffset += sizeRes;
+  return sizeRes;
 }
 
 static int fused_pcap_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fileInfo)
@@ -689,6 +802,7 @@ static int fused_pcap_statfs(const char *path, struct statvfs *status)
 
 static int fused_pcap_release(const char *path, struct fuse_file_info *fileInfo)
 {
+  struct fusedPcapInstance_s *instance;
   int ret;
 
   //TODO: finish
@@ -719,8 +833,15 @@ static int fused_pcap_release(const char *path, struct fuse_file_info *fileInfo)
   //remove fileEntry from cluster index;
   //if (last fileEntry in clusterIndex)
     //clear clusterIndex
-  //free(fileEntry);
   ret = close(fileInfo->fh);
+
+  instance = getInstance(fileInfo);
+  if (instance == NULL)
+    return -EBADF;  // fuse fd passed between pids, or process forked? look up based on name and offset?
+  free(instance->shortPath);
+  free(instance->readFile);
+  memset(instance, '\0', sizeof(struct fusedPcapInstance_s));
+
   if (ret == -1)
     return -errno;
   return ret;
