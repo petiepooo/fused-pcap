@@ -22,7 +22,7 @@ The directory containing the pcap files to concatenate is specified during mount
 
 The pcap file to start with is specified when calling open().
 
-The pcap file to end with is optionally specified when calling open().  The format for that is "actualstartfile..actualendfile" as the filename.  Tab completion should be implemented if possible, even using the endfile format.
+The pcap file to end with is optionally specified when calling open().  The format for that is "actualstartfile..actualendfile" as the filename.  Tab completion doesn't seem to be possible for the range format.
 
 If start and end files are both specified at open time, actual filesize can be computed and returned by fstat().  If clustersize < 1, it will be larger than what is actually read before EOF is sent.
 
@@ -38,6 +38,16 @@ If one process in a cluster ends prematurely, it would normally block all others
 2. The remaining members receive an EOF on next read.  .abend, .last, and .next are created as above.
 3. The remaminig members receive an EINVAL error on next read.  .abend, .last, and .next are created as above.
 
+For clustersize==1, reads are just forwarded to the calling pid as is in large chunks.  No parsing takes place.
+
+For clustersize>1, reads are performed by the cluster member that first tries to read a block past what's been previously read.  This works out since it's the furthest ahead and likely the lightest loaded member.  That reader is responsible for reading a block from disk, parsing the packet headers, determining which member should receive it, and adding the packets to the queues.
+
+Packet queues are implemented as linked lists of slab chunks.  Links are removed from the head as they're sent to the users, and added to the tail by the parsing member.  Removals are done in a thread-safe manner by the owning member.  The only time mutex protection is needed is when the final link is removed and the head pointer is set to NULL.  The parsing member needs to acquire a mutex on each addition, so will grab the mutex the whole time it's adding links.  This also ensures there are not two members reading and parsing the same portion of the input file.
+
+Link structures will be slab allocated so memory isn't thrashed, and so the next link pointer remains valid even after a member removes it from the head.  Since the parsing member would be the only one changing the next pointer, it just needs to ensure it's reached the tail of all lists (thus protected by the mutex) before it makes changes.
+
+As a member pulls links off its head, it adds them to the free list head.  This list uses a second next pointer so as not to disturb the pointer that the parsing member may be accessing.  The parsing member, on reaching tail, can reap blocks from this list starting with block #2, leaving he first one with the reading member.
+
 ###Options:
 
 Read-time options can be specified as preceeding subdirectories, and take precedence over mount-time options, eg: /mnt/pcap/clustersize=6/eth0.pcap.1092933
@@ -51,12 +61,14 @@ open() and mount-time options include:
 * filesize=X - size of file returned in fstat() call, K, M, G, T, and P suffixes allowed (default 512T).
 * clusterabend=X - how to handle premature closure of cluster member's read handle (0=err, 1=eof, 2=ignore) (default=0).
 * clustermode=X - how to distribute packets between cluster members (0=vlan+ip+port, 1=vlan, 2=ip, 3=vlan+ip, 4=ip+port) (default=0).
+* keepcache - enables fuse keepcache option
 
 ###Potential pitfalls:
 
 * Reading from a file instead of a stream usually means that programs know what size a file is.  We don't, so we'll have to fake it by specifying a really, really large filesize.  If a program wants to try to lseek() beyond what currently exists, we'll have to return an error.
 * We might actually want to make the filesize a realistic value to avoid edge cases due to long long int sign and rollover issues.  To make testing that easier, an (undocumented) option to set the filesize.
 * We should handle O_NONBLOCK or O_NDELAY option during open() correctly, returing EAGAIN on read() if appropriate.  I don't know yet how that would work.
+* To avoid padding short reads with zeroes, the direct_io option is enabled at all times.
 
 ###Development plan:
 
