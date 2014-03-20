@@ -55,6 +55,9 @@ static const char *fusedPcapVersion = "0.0.3a";
 #define MAX_CLUSTER_SIZE 32
 #define MAX_NUM_CLUSTERS 4
 
+// number of linked linst nodes to add when exhausted
+#define SLAB_ALLOC_COUNT 32
+
 // default pcap filesize is two exabytes
 #define DEFAULT_PCAP_FILESIZE 1024LL * 1024 * 1024 * 1024 * 1024 * 1024 * 2
 // minimum is 1, maximum is however much an "off_t" type can hold
@@ -113,6 +116,7 @@ static struct fusedPcapCluster_s {
   char *shortPath;
   struct fusedPcapInstance_s *instance[MAX_CLUSTER_SIZE];
   struct packet_link_s *free;
+  struct packet_link_s *slabs;
   //bitfields
   uint32_t fullyPopulated: 1;
 } fusedPcapClusters[MAX_NUM_CLUSTERS];
@@ -123,10 +127,11 @@ pthread_mutex_t instanceMutex = PTHREAD_MUTEX_INITIALIZER;
 static struct fusedPcapInstance_s {
   off_t readOffset;
   off_t outputOffset;
+  struct packet_link_s *queue;
+  struct packet_link_s *free;
+  struct fusedPcapCluster_s *cluster;
   char *shortPath; // allocated with strdup; must be freed when pid cleared
   char *readFile;  // allocated with strdup; must be freed when file closed
-  struct packet_list_s *queue;
-  struct fusedPcapCluster_s *cluster;
   int member;
   int fd;
   pid_t pid;
@@ -365,6 +370,7 @@ static struct fusedPcapInstance_s *populateInstance(const char *shortPath, struc
   struct fuse_context *context;
   struct fusedPcapInstance_s *instance;
   struct fusedPcapCluster_s *cluster;
+  struct packet_link_s *next;
   int i;
 
   cluster = NULL;
@@ -436,6 +442,15 @@ static struct fusedPcapInstance_s *populateInstance(const char *shortPath, struc
         cluster->shortPath = strdup(shortPath);
         instance->shortPath = cluster->shortPath;
         cluster->instance[0] = instance; // last change for thread safety
+        cluster->slabs = calloc(SLAB_ALLOC_COUNT, sizeof(struct packet_link_s));
+        if (cluster->slabs) {
+          //struct packet_link_s *oldfree = cluster->free;  // if adding to rather than initializing
+          cluster->free = next = cluster->slabs + 1;
+          for (i=2; i<SLAB_ALLOC_COUNT; i++) { // first used by slabs, last has free=NULL
+            next = next->free = next + 1;
+          }
+          //next->free = oldfree;
+        }
       }
       // otherwise, clean up and return NULL
     }
@@ -461,6 +476,8 @@ static struct fusedPcapInstance_s *findInstance(void)
 static inline void clearInstance(struct fusedPcapInstance_s *instance)
 {
   int i;
+  struct packet_link_s *slab;
+  struct packet_link_s *head;
 
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "clearing instance %p\n", instance);
@@ -471,6 +488,15 @@ static inline void clearInstance(struct fusedPcapInstance_s *instance)
   if (instance->config.clustersize > 1 && instance->cluster) {
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "removing instance %p from cluster %p member %d\n", instance, instance->cluster, instance->member);
+    if (fusedPcapGlobal.debug) {
+      head = instance->free;
+      i = 0;
+      while (head) {
+        i++;
+        head = head->free;
+      }
+      fprintf(stderr, "%d free links in instance free list lost until cluster slabs are freed\n", i);
+    }
     instance->cluster->instance[instance->member] = NULL;
     for (i=0; i<instance->config.clustersize; i++)
       if (instance->cluster->instance[i])
@@ -480,6 +506,25 @@ static inline void clearInstance(struct fusedPcapInstance_s *instance)
         fprintf(stderr, "last instance removed, clearing cluster too\n");
       if (instance->cluster->shortPath)
         free(instance->cluster->shortPath);
+      if (fusedPcapGlobal.debug) {
+        head = instance->cluster->free;
+        i = 0;
+        while (head) {
+          i++;
+          head = head->free;
+        }
+        fprintf(stderr, "%d free links in cluster free list\n", i);
+      }
+      slab = instance->cluster->slabs;
+      i = 0;
+      while (slab) {
+        i++;
+        head = slab;
+        slab = slab->next;
+        free(head);
+      }
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "%d memory slabs freed from cluster\n", i);
       memset(instance->cluster, '\0', sizeof(struct fusedPcapCluster_s));
     }
   }
@@ -861,11 +906,28 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
     instance->outputOffset += sizeRes;
   //}
   //else {
-    //read more from source file if there are no packets in our queue
-    //queue up the next contiguous group of 1 or more packets
-    //sizeRes = size in queue
-    //memcpy(buffer, queue offset, sizeRes);
-    //instance->outputOffset += sizeRes
+    //send next packet in the queue
+    if (instance->queue) {
+      if (instance->queue->next == NULL) {
+        //get the read mutex
+      }
+      //sizeRes = instance->queue->size;
+      //copy sizeRes from instance->queue->buffer to buffer
+      instance->queue->free = instance->free;
+      instance->free = instance->queue;
+      instance->queue = instance->queue->next;
+      if (instance->queue == NULL) {
+        //release the read mutex
+      }
+    }
+    else {
+      //get the read mutex
+      //read more from source file if there are no packets in our queue, blocking if too far ahead
+      //chase all queues to the last block
+      //reap the free links from all members
+      //parse the packets, adding link to member's queue, growing slabs as needed
+      //release the read mutex
+    }
   //}
 
   if (sizeRes == 0) {
