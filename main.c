@@ -1462,11 +1462,7 @@ int main (int argc, char *argv[])
 
   openlog(NULL, LOG_PID, LOG_DAEMON);
 
-#if FUSE_VERSION >= 26
   return fuse_main(fuseArgs.argc, fuseArgs.argv, &callbackOperations, NULL);
-#else
-  return fuse_main(fuseArgs.argc, fuseArgs.argv, &callbackOperations);
-#endif
 }
 
 
