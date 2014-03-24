@@ -20,7 +20,7 @@
 
 #define FUSE_USE_VERSION	26
 
-static const char *fusedPcapVersion = "0.0.3a";
+static const char *fusedPcapVersion = "0.0.4a";
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -90,6 +90,7 @@ static struct fusedPcapGlobal_s {
   char pcapDirectory[PATH_MAX + 1];
   char mountDirectory[PATH_MAX + 1];
   int debug;
+  long pageSize;
 } fusedPcapGlobal;
 
 static struct fusedPcapConfig_s {
@@ -813,6 +814,9 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
     clearInstance(instance);
     return -errno;
   }
+
+  // read first few bytes, verify it's a pcap, rewind to beginning of file
+
   fileInfo->direct_io = 1;
   fileInfo->nonseekable = 1;
   if (fileConfig.keepcache)
@@ -1326,7 +1330,19 @@ int main (int argc, char *argv[])
 
     //TODO: validate source directory parameter
 
+    // retrieve the system pagesize, verify that it's a power of 2, save it
+    fusedPcapGlobal.pageSize = sysconf(_SC_PAGESIZE);
+    if (fusedPcapGlobal.pageSize <= 0) {
+      fprintf(stderr, "%s: warning: pagesize invalid, assuming 4k\n", argv[0]);
+      fusedPcapGlobal.pageSize = 4096;
+    }
+    else if (fusedPcapGlobal.pageSize & (fusedPcapGlobal.pageSize - 1)) { // more than one bit set?
+      fprintf(stderr, "%s: PAGESIZE is not a power of 2\n", argv[0]);
+      return 1;
+    }
+
     if (fusedPcapGlobal.debug) {
+      fprintf(stderr, "PAGESIZE: %ld\n", fusedPcapGlobal.pageSize);
       printConfigStruct(&fusedPcapConfig);
       fprintf(stderr, "Parameters validated, calling fuse_main()\n");
     }
