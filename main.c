@@ -1313,6 +1313,7 @@ static void usage(const char *progname)
 
 enum {
   FUSED_PCAP_OPT_KEY_HELP,
+  FUSED_PCAP_OPT_KEY_HO,
   FUSED_PCAP_OPT_KEY_VERSION,
   FUSED_PCAP_OPT_KEY_DEBUG,
   FUSED_PCAP_OPT_KEY_KEEPCACHE,
@@ -1338,6 +1339,7 @@ static struct fuse_opt fusedPcapOptions[] = {
 
   FUSE_OPT_KEY("-h",        FUSED_PCAP_OPT_KEY_HELP),
   FUSE_OPT_KEY("--help",    FUSED_PCAP_OPT_KEY_HELP),
+  FUSE_OPT_KEY("-ho",       FUSED_PCAP_OPT_KEY_HO),
   FUSE_OPT_KEY("-v",        FUSED_PCAP_OPT_KEY_VERSION),
   FUSE_OPT_KEY("--version", FUSED_PCAP_OPT_KEY_VERSION),
   FUSE_OPT_KEY("debug",     FUSED_PCAP_OPT_KEY_DEBUG),
@@ -1380,6 +1382,9 @@ static int parseMountOptions(void *data, const char *arg, int key, struct fuse_a
   case FUSED_PCAP_OPT_KEY_HELP:
     fusedPcapInputs.help = 1;
     usage(basename(arguments->argv[0]));
+    return fuse_opt_add_arg(arguments, "-ho");
+  case FUSED_PCAP_OPT_KEY_HO:
+    fusedPcapInputs.help = 1;
     return fuse_opt_add_arg(arguments, "-ho");
   case FUSED_PCAP_OPT_KEY_VERSION:
     fprintf(stdout, "%s version %s\n", basename(arguments->argv[0]), fusedPcapVersion);
