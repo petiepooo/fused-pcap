@@ -894,6 +894,7 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   if (!instance)
     return -EMFILE;
 
+  endFile = NULL;
   if (separateEndingFile(&shortPath, &endFile)) {
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "separate ending file detected: %s\n", endFile);
