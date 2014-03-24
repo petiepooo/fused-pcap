@@ -125,6 +125,12 @@ static struct fusedPcapCluster_s {
 // this mutex protects the array below; pid indicates whether an entry is free or not.
 pthread_mutex_t instanceMutex = PTHREAD_MUTEX_INITIALIZER;
 
+struct fusedPcapDirectory_s {
+  char *shortPath; // allocated with strdup; must be freed when pid cleared
+  DIR *fd;
+  struct fusedPcapConfig_s config;
+}; 
+
 static struct fusedPcapInstance_s {
   off_t readOffset;
   off_t outputOffset;
@@ -336,14 +342,27 @@ static int reapConfigDirs(const char *path, char **shortPath, struct fusedPcapCo
   return 0;
 }
 
-static int isSpecialFile(const char *path)
+static int isOptionDir(const char *path)
 {
-  if (strncmp("..", path, 2) == 0)
-    if ((strncmp("status", path + 2, 6) == 0) ||
-        (strncmp("last", path + 2, 4) == 0) ||
-        (strncmp("next", path + 2, 4) == 0))
+  if (strncmp("/..", path, 3) == 0)
+    if ((strncmp("filesize=", path + 3, 9) == 0) ||
+        (strncmp("clustersize=", path + 3, 12) == 0) ||
+        (strncmp("clustermode=", path + 3, 12) == 0) ||
+        (strncmp("clusterabend=", path + 3, 13) == 0) ||
+        (strncmp("blockslack=", path + 3, 11) == 0) ||
+        (strncmp("keepcache", path + 3, 9) == 0))
       return 1;
   return 0;
+}
+
+static int isSpecialFile(const char *path)
+{
+  if (strncmp("/..", path, 3) == 0)
+    if ((strncmp("status", path + 3, 6) == 0) ||
+        (strncmp("last", path + 3, 4) == 0) ||
+        (strncmp("next", path + 3, 4) == 0))
+      return 1;
+  return isOptionDir(path);;
 }
 
 //NOTE: this function modifies the string in fullPath if it finds a ".." delimiter
@@ -474,7 +493,7 @@ static struct fusedPcapInstance_s *findInstance(void)
   return NULL;
 }
 
-static inline void clearInstance(struct fusedPcapInstance_s *instance)
+static void clearInstance(struct fusedPcapInstance_s *instance)
 {
   int i;
   struct packet_link_s *slab;
@@ -546,6 +565,16 @@ static inline struct fusedPcapInstance_s *getInstance(struct fuse_file_info *fil
   return (struct fusedPcapInstance_s *)fileInfo->fh;  //masking only, no mutex needed
 }
 
+static inline void setDirectory(struct fuse_file_info *fileInfo, struct fusedPcapDirectory_s *directory)
+{
+  fileInfo->fh = (uint64_t)directory;  //masking only, no mutex needed
+}
+
+static inline struct fusedPcapDirectory_s *getDirectory(struct fuse_file_info *fileInfo)
+{
+  return (struct fusedPcapDirectory_s *)fileInfo->fh;  //masking only, no mutex needed
+}
+
 // FUSE CALLBACKS
 
 static void *fused_pcap_init(struct fuse_conn_info *conn)
@@ -569,8 +598,27 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
   struct fusedPcapInstance_s *instance;
 
   //TODO:
+  stData->st_ino = 99999;
+  stData->st_uid = geteuid();
+  stData->st_gid = getegid();
+  stData->st_size = 1;
+  stData->st_nlink = 1;
+  stData->st_blocks = 1;
   if (isSpecialFile(path)) {
-    //return the file's stData
+    if (isOptionDir(path)) {
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "detected %s is a special directory\n", path);
+      stData->st_size = 1;
+      stData->st_mode = S_IFLNK | S_IRWXU | S_IRWXG | S_IRWXO;
+      return 0;
+    }
+    else {
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "detected %s is a special file\n", path);
+      stData->st_size = 43;
+      stData->st_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH;
+      return 0;
+    }
   }
 
   if (reapConfigDirs(path, &shortPath, &fileConfig))
@@ -614,69 +662,119 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
 
 static int fused_pcap_readlink(const char *path, char *buffer, size_t size)
 {
+  if (isSpecialFile(path)) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "detected %s is a special file\n", path);
+
+    if (size >= 2) {
+      buffer[0] = '.';
+      buffer[1] = '\0';
+    }
+    return 0;
+  }
   //TODO: finish
-  (void)path;
-  (void)buffer;
-  (void)size;
   return -EROFS;
 }
 
 static int fused_pcap_opendir(const char *path, struct fuse_file_info *fileInfo)
 {
   char mountPath[PATH_MAX + 1];
-  struct fusedPcapConfig_s fileConfig;
+  struct fusedPcapDirectory_s *dirInfo;
+  //struct fusedPcapConfig_s fileConfig;
   char *shortPath;
 
+  dirInfo = malloc(sizeof(struct fusedPcapDirectory_s));
+  if (dirInfo == NULL)
+    return -ENOMEM;
 
-  if (reapConfigDirs(path, &shortPath, &fileConfig))
+  if (reapConfigDirs(path, &shortPath, &dirInfo->config)) {
     return -ENOENT;
+  }
   if (fusedPcapGlobal.debug)
-    printConfigStruct(&fileConfig);
+    printConfigStruct(&dirInfo->config);
 
   if (! shortPath)
     shortPath = "/";
   snprintf(mountPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, shortPath);
 
-  fileInfo->fh = (uint64_t)opendir(mountPath);
-  if (fileInfo->fh == 0)
+  dirInfo->fd = opendir(mountPath);
+  if (dirInfo->fd == NULL) {
+    free(dirInfo);
     return -errno;
+  }
+  dirInfo->shortPath = strdup(shortPath);
+  setDirectory(fileInfo, dirInfo);
 
   return 0;
 }
 
 static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fileInfo)
 {
+  char pseudoDir[PATH_MAX + 1];
   struct dirent *entry;
   struct stat status;
+  struct fusedPcapDirectory_s *dirInfo;
 
   (void)path;  // should not use if flag_nopath is set
   (void)offset;
-  (void)fileInfo;
 
-  while ((entry = readdir((DIR *)fileInfo->fh)) != NULL) {
+  dirInfo = getDirectory(fileInfo);
+  while ((entry = readdir(dirInfo->fd)) != NULL) {
     memset(&status, 0, sizeof(struct stat));
     status.st_ino = entry->d_ino;
     status.st_mode = entry->d_type << 12;
+    //TODO: add/remove options pseudodirs from path before returning d_name
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "sending %s to filler callback\n", entry->d_name);
     if (filler(buffer, entry->d_name, &status, 0))
       break;
   }
 
-  //add special files
-  //memset(&status, 0, sizeof(struct stat));
-  //status.st_ino = 999990;
-  //status.st_mode = S_IRUSR | S_IRGRP | S_IROTH;
-  //filler(buffer, "..status",  &status, 0);
+  //TODO: add special files
+  memset(&status, 0, sizeof(struct stat));
+  status.st_ino = 99999;
+  status.st_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH;
+  filler(buffer, "..status",  &status, 0);
   //if (fileIsOpen(mountPath))
     //filler(buffer, "..pids", &status, 0);
+
+  //TODO: add options pseudodirs as special symlinks to ".."
+  status.st_mode = S_IFLNK | S_IRWXU | S_IRWXG | S_IRWXO;
+  status.st_uid = geteuid();
+  status.st_gid = getegid();
+  status.st_size = 1;
+  status.st_nlink = 1;
+  status.st_blocks = 1;
+  snprintf(pseudoDir, PATH_MAX, "..filesize=%lli", (long long int)dirInfo->config.filesize);
+  filler(buffer, pseudoDir,  &status, 0);
+  snprintf(pseudoDir, PATH_MAX, "..clustersize=%d", dirInfo->config.clustersize);
+  filler(buffer, pseudoDir,  &status, 0);
+  snprintf(pseudoDir, PATH_MAX, "..clustermode=%d", dirInfo->config.clustermode);
+  filler(buffer, pseudoDir,  &status, 0);
+  snprintf(pseudoDir, PATH_MAX, "..clusterabend=%d", dirInfo->config.clusterabend);
+  filler(buffer, pseudoDir,  &status, 0);
+  snprintf(pseudoDir, PATH_MAX, "..blockslack=%d", dirInfo->config.blockslack);
+  filler(buffer, pseudoDir,  &status, 0);
+  if (dirInfo->config.keepcache)
+    filler(buffer, "..keepcache",  &status, 0);
 
   return 0;
 }
 
 static int fused_pcap_releasedir(const char *path, struct fuse_file_info *fileInfo)
 {
+  struct fusedPcapDirectory_s *dirInfo;
+  DIR *fd;
+
   (void)path;  // should not use if flag_nopath is set
 
-  if (closedir((DIR *)fileInfo->fh) != 0)
+  dirInfo = getDirectory(fileInfo);
+  fd = dirInfo->fd;
+  if (dirInfo->shortPath)
+    free(dirInfo->shortPath);
+  free(dirInfo);
+
+  if (closedir(fd) != 0)
     return -errno;
   return 0;
 }
@@ -775,16 +873,16 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   struct fusedPcapInstance_s *instance;
   char *endFile;
   
-  if (isSpecialFile(path)) {
-    //return the file's fd
-  }
-
-  //TODO: check fileInfo->flags for inappropriate values
-
   if (fileInfo->flags & (O_CREAT | O_WRONLY)) {
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "open detected O_CREAT or O_WRONLY flags in %x, returning EROFS\n", fileInfo->flags);
     return -EROFS;
+  }
+
+  if (isSpecialFile(path)) {
+    //return the file's fd
+    fileInfo->fh = 43;
+    return 0;
   }
 
   if (reapConfigDirs(path, &shortPath, &fileConfig))
@@ -845,6 +943,11 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
   (void)path;  // should not use if flag_nopath is set
 
   //TODO: finish
+
+  if (fileInfo->fh == 43) {
+    strncpy(buffer, "This is my special wonder-file contents...\n", size);
+    return strlen(buffer);
+  }
 
   instance = getInstance(fileInfo);
   if (instance == NULL)
@@ -1036,11 +1139,14 @@ static int fused_pcap_release(const char *path, struct fuse_file_info *fileInfo)
   //remove fileEntry from cluster index;
   //if (last fileEntry in clusterIndex)
     //clear clusterIndex
-  ret = close(fileInfo->fh);
+
+  if (fileInfo->fh == 43) //TODO
+    return 0;
 
   instance = getInstance(fileInfo);
   if (instance == NULL)
     return -EBADF;  // fuse fd passed between pids, or process forked? look up based on name and offset?
+  ret = close(instance->fd);
   clearInstance(instance);
 
   if (ret == -1)
