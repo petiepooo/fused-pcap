@@ -389,10 +389,10 @@ static int separateEndingFile(char **fullPath, char **endFile)
 {
   char *delimiter;
 
-  if (! *fullPath)
+  if (! *fullPath || ! *fullPath[0] || ! *fullPath[1])
     return 0;
 
-  delimiter = strstr(*fullPath, "..");
+  delimiter = strstr(*fullPath + 2, "..");
   if (delimiter) {
     //NOTE: this will break if there are actual subdirectories under the mountpoint
     *delimiter++ = '\0';
