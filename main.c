@@ -1184,8 +1184,8 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
       //if (non-blocking)
         //return -EAGAIN;
       //delay a little or wait for next open event, blocking this read
-      usleep(1000000);//TODO: if we figure out below, shorten this time
-      //TODO: if (check for INTERRUPT)
+      usleep(100000);//TODO: if we figure out below, shorten this time
+      if (fuse_interrupted())
         return -EINTR;
     }
 
