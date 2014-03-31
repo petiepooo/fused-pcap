@@ -758,10 +758,11 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
     return -errno;
   }
 
-  //TODO:
-  //stData->st_mode &= !(S_IWUSR | S_IWGRP | S_IWOTH);
-  //stData->st_size = fusedPcapConfig.filesize;
-  //if (endFile)
+  stData->st_mode = stData->st_mode & ~(S_IWUSR | S_IWGRP | S_IWOTH);
+  if (S_ISREG(stData->st_mode))
+    //TODO: if (half-assed guess that file is a pcap?)
+      stData->st_size = fileConfig.filesize;
+  //TODO: if (endFile)
     //stData->st_size = computeFilesize(mountPath, endFile);
 
   return 0;
