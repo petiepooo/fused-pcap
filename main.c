@@ -326,6 +326,7 @@ static char *specialFiles[] = {
   "..last",
   "..current",
   "..next",
+  "..pids",
 };
 
 static int parsePath(const char *path, struct fusedPcapConfig_s *config, const char **mountPath, const char **filename, const char **specialFile, const char **endFile)
@@ -390,7 +391,7 @@ static int parsePath(const char *path, struct fusedPcapConfig_s *config, const c
     return 0;
  
   if (specialFile) {
-    for (i=0; i<5; i++) {
+    for (i=0; i<6; i++) {
       if (strcmp(specialFiles[i], delimiter + 1) == 0) {
         *specialFile = delimiter;
         return 0;
@@ -580,6 +581,7 @@ static struct fusedPcapInstance_s *findInstance(void)
 static void clearInstance(struct fusedPcapInstance_s *instance)
 {
   int i;
+  struct fusedPcapResidual_s *residual;
   struct packet_link_s *slab;
   struct packet_link_s *head;
 
@@ -587,6 +589,25 @@ static void clearInstance(struct fusedPcapInstance_s *instance)
     fprintf(stderr, "clearing instance %p\n", instance);
   //protect this whole operation with a mutex
   pthread_mutex_lock(&instanceMutex);
+
+  residual = getResidual(&instance->config, NULL);
+  if (residual) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "comparing cuurent pid %d to residual pid %d\n", instance->pid, residual->pid[0]);
+    for (i=0; i<MAX_CLUSTER_SIZE - 1 && residual->pid[i]; i++)
+      if (residual->pid[i] == instance->pid)
+        break;
+    if (fusedPcapGlobal.debug && i < MAX_CLUSTER_SIZE)
+      fprintf(stderr, "clearing pid from residual %p pid array index %d\n", residual, i);
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "first two in pid array: %d %d\n", residual->pid[0], residual->pid[1]);
+    for (   ; i<MAX_CLUSTER_SIZE - 1 && residual->pid[i]; i++)
+      residual->pid[i] = residual->pid[i+1];
+    residual->pid[i] = 0;
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "first two in pid array: %d %d\n", residual->pid[0], residual->pid[1]);
+  }
+
   if (instance->readFile)
     free(instance->readFile);
   if (instance->config.clustersize > 1 && instance->cluster) {
@@ -719,6 +740,8 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
       if (residual->nextFile && strcmp(specialFile, "/..next") == 0)
         return 0;
       if (residual->abendPid && strcmp(specialFile, "/..abend") == 0)
+        return 0;
+      if (residual->pid[0] && strcmp(specialFile, "/..pids") == 0)
         return 0;
     }
     else {
@@ -879,8 +902,12 @@ static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t fi
       fprintf(stderr, "sending %s to filler callback\n", fillerPath);
     filler(buffer, fillerPath,  &status, 0);
   }
-  //TODO:if (fileIsOpen(mountPath))
-    //filler(buffer, "..pids", &status, 0);
+  if (dirInfo->residual->pid[0]) {
+    snprintf(fillerPath, PATH_MAX, "..pids");
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "sending %s to filler callback\n", fillerPath);
+    filler(buffer, fillerPath,  &status, 0);
+  }
 
   status.st_size = 1;
   status.st_mode = S_IFLNK | S_IRWXU | S_IRWXG | S_IRWXO;
@@ -1021,11 +1048,13 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   struct fusedPcapConfig_s fileConfig;
   struct fusedPcapInstance_s *instance;
   struct fusedPcapResidual_s *residual;
+  struct fuse_context *context;
   const char *mountPath;
   const char *filename;
   const char *specialFile;
   const char *endFile;
   int length;
+  int i;
   
   if (fileInfo->flags & (O_CREAT | O_WRONLY)) {
     if (fusedPcapGlobal.debug)
@@ -1102,6 +1131,19 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
 
   residual = getResidual(&fileConfig, filename);
   if (residual) {
+    context = fuse_get_context();
+    for (i=0; i<MAX_CLUSTER_SIZE; i++)
+      if (residual->pid[i] == 0)
+        break;
+    if (i < MAX_CLUSTER_SIZE) {
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "adding pid to residual %p pid array index %d\n", residual, i);
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "first two in pid array: %d %d\n", residual->pid[0], residual->pid[1]);
+      residual->pid[i] = context->pid;
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "first two in pid array: %d %d\n", residual->pid[0], residual->pid[1]);
+    }
     if (residual->thisFile) {
       if (residual->lastFile)
         free(residual->lastFile);
@@ -1115,6 +1157,9 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
 
 static int readSpecialFile(char *buffer, size_t size, off_t offset, struct fusedPcapResidual_s *residual)
 {
+  int i;
+  int len;
+
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "residual at %p, mountPath is %s\n", residual, residual->mountPath);
   if (residual->mountPath && strcmp(residual->mountPath, "/..status") == 0) {
@@ -1135,6 +1180,14 @@ static int readSpecialFile(char *buffer, size_t size, off_t offset, struct fused
   if (residual->mountPath && strcmp(residual->mountPath, "/..next") == 0)
     if (residual->nextFile && residual->nextFile[0])
       return snprintf(buffer, size, "%s\n", residual->nextFile);
+  if (residual->mountPath && strcmp(residual->mountPath, "/..pids") == 0) {
+    buffer[0] = '\0';
+    for (i=0; i<MAX_CLUSTER_SIZE && residual->pid[i] != 0; i++) {
+      len = strnlen(buffer, size - 16); //strlen excludes terminating NUL
+      snprintf(buffer + len, size - len, "%d\n", residual->pid[i]);
+    }
+    return strlen(buffer);
+  }
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "failed to match!  lastFile: %s  thisFile: %s  nextFile: %s\n", residual->lastFile, residual->thisFile, residual->nextFile);
   return -EACCES;
