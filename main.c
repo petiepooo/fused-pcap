@@ -745,9 +745,16 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
 
   snprintf(statPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, mountPath);
   if (endFile) {
-    length = filename - mountPath + strlen(fusedPcapGlobal.pcapDirectory) + 1;
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "ending file detected, using it instead of start file (len=%d\n", length);
+    if (endFile[0]) {
+      length = filename - mountPath + strlen(fusedPcapGlobal.pcapDirectory) + 1;
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "ending file detected, using it instead of start file (len=%d\n", length);
+    }
+    else {
+      length = endFile - mountPath + strlen(fusedPcapGlobal.pcapDirectory) - 2;
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "empty ending file detected, truncating start file to %d\n", length);
+    }
     if (length > PATH_MAX)
       return -EINVAL;
     statPath[length] = '\0';
@@ -1661,9 +1668,16 @@ static int fused_pcap_access(const char *path, int mode)
 
   snprintf(accessPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, mountPath);
   if (endFile) {
-    length = filename - mountPath + strlen(fusedPcapGlobal.pcapDirectory) + 1;
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "ending file detected, using it instead of start file (len=%d\n", length);
+    if (endFile[0]) {
+      length = filename - mountPath + strlen(fusedPcapGlobal.pcapDirectory) + 1;
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "ending file detected, using it instead of start file (len=%d\n", length);
+    }
+    else {
+      length = endFile - mountPath + strlen(fusedPcapGlobal.pcapDirectory) - 2;
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "empty ending file detected, truncating start file to %d\n", length);
+    }
     if (length > PATH_MAX)
       return -EINVAL;
     accessPath[length] = '\0';
