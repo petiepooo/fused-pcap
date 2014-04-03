@@ -1044,6 +1044,7 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   const char *endFile;
   int length;
   int i;
+  int fd;
   
   if (fileInfo->flags & (O_CREAT | O_WRONLY)) {
     if (fusedPcapGlobal.debug)
@@ -1076,10 +1077,6 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
     return 0;
   }
 
-  instance = populateInstance(mountPath, &fileConfig);
-  if (!instance)
-    return -EMFILE;
-
   snprintf(openPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, mountPath);
   if (endFile) {
     length = endFile - mountPath + strlen(fusedPcapGlobal.pcapDirectory) - 2;
@@ -1088,31 +1085,39 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
     if (length > PATH_MAX)
       return -EINVAL;
     openPath[length] = '\0';
-
-    snprintf(instance->endFile, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, endFile);
   }
+
+  if (fusedPcapGlobal.debug)
+    fprintf(stderr, "OPEN --- calling open for %s\n", openPath);
+  fd = open(openPath, fileInfo->flags);
+  if (fd == -1)
+    return -errno;
+
+  // read first few bytes, verify it's a pcap, rewind to beginning of file
 
   fileInfo->direct_io = 1;
   fileInfo->nonseekable = 1;
   if (fileConfig.keepcache)
     fileInfo->keep_cache = 1;
+
+  instance = populateInstance(mountPath, &fileConfig);
+  if (!instance) {
+    close(fd);
+    return -EMFILE;
+  }
+
   if (stat(openPath, &instance->stData) == -1) {
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "stat() failed for %s\n", openPath);
+    close(fd);
     clearInstance(instance);
     return -errno;
   }
   instance->stData.st_size = instance->config.filesize;
+  instance->fd = fd;
 
-  if (fusedPcapGlobal.debug)
-    fprintf(stderr, "OPEN --- calling open for %s\n", openPath);
-  instance->fd = open(openPath, fileInfo->flags);
-  if (instance->fd == -1) {
-    clearInstance(instance);
-    return -errno;
-  }
-
-  // read first few bytes, verify it's a pcap, rewind to beginning of file
+  if (endFile)
+    snprintf(instance->endFile, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, endFile);
 
   instance->readFile = strdup(openPath);
   instance->nonblocking = ((fileInfo->flags | O_NONBLOCK) == O_NONBLOCK);
