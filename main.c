@@ -466,116 +466,6 @@ static int getResidualIndex(struct fusedPcapResidual_s *residual)
   return 0;
 }
 
-static struct fusedPcapInstance_s *populateInstance(const char *shortPath, struct fusedPcapConfig_s *config)
-{
-  struct fuse_context *context;
-  struct fusedPcapInstance_s *instance;
-  struct fusedPcapCluster_s *cluster;
-  struct packet_link_s *next;
-  int i;
-
-  cluster = NULL;
-  context = fuse_get_context();
-
-  //need to protect fusedPcapInstances array allocation with mutex
-  pthread_mutex_lock(&instanceMutex);
-  for (i=0; i<MAX_CLUSTER_SIZE; i++)
-    if (fusedPcapInstances[i].pid == 0)
-      break;
-  if (i == MAX_CLUSTER_SIZE)
-    return NULL;
-  instance = &fusedPcapInstances[i];
-  instance->pid = context->pid;
-  //once pid is non-zero, other threads will skip the entry, so release mutex while we finish
-  pthread_mutex_unlock(&instanceMutex);
-  if (fusedPcapGlobal.debug)
-    fprintf(stderr, "populating %p instance struct for %s [%d]\n", instance, shortPath, context->pid);
-
-  //NOTE: if strdup fails, this is set to NULL; always verify before dereferencing
-  //readFile populated by caller
-  //fd populated by caller
-  instance->readOffset = 0ll;
-  instance->outputOffset = 0ll;
-  instance->endFile[0] = '\0';
-  memcpy(&instance->config, config, sizeof(struct fusedPcapConfig_s));
-  //stData cached by caller
-  instance->bits = 0;
-  if (config->clustersize == 1) {
-    instance->shortPath = strdup(shortPath);
-  }
-  else {
-    pthread_mutex_lock(&clusterMutex);
-    for (i=0; i<MAX_NUM_CLUSTERS; i++) {
-      cluster = &fusedPcapClusters[i];
-      if (cluster->shortPath &&
-          strcmp(cluster->shortPath, shortPath) == 0 &&cluster->shortPath &&
-          memcmp(&cluster->config, config, sizeof(struct fusedPcapConfig_s)) == 0)
-        break;
-    }
-    if (i < MAX_NUM_CLUSTERS) {  // found a matching shortPath and config
-      cluster = &fusedPcapClusters[i];
-      for (i=0; i<config->clustersize; i++)
-        if (cluster->instance[i] == NULL)
-          break;
-      if (i < config->clustersize) {
-        if (fusedPcapGlobal.debug)
-          fprintf(stderr, "joining instance %p to cluster %p as member %d\n", instance, cluster, i);
-        instance->cluster = cluster;
-        instance->member = i;
-        instance->shortPath = cluster->shortPath;
-        cluster->instance[i] = instance; // last change for thread safety
-        if (i + 1 == config->clustersize)
-          cluster->fullyPopulated = 1;
-      }
-      // otherwise, clean up and return NULL
-    }
-    else {
-      for (i=0; i<MAX_NUM_CLUSTERS; i++)
-        if (fusedPcapClusters[i].shortPath == NULL)
-          break;
-      if (i < MAX_NUM_CLUSTERS) {  // found a free cluster offset
-        if (fusedPcapGlobal.debug)
-          fprintf(stderr, "populating new cluster for instance %p at %p as member 0\n", instance, cluster);
-        cluster = &fusedPcapClusters[0];
-        pthread_mutex_init(&cluster->readThreadMutex, NULL);
-        pthread_mutex_init(&cluster->queueHeadMutex, NULL);
-        instance->cluster = cluster;
-        instance->member = 0;
-        memcpy(&cluster->config, config, sizeof(struct fusedPcapConfig_s));
-        cluster->shortPath = strdup(shortPath);
-        instance->shortPath = cluster->shortPath;
-        cluster->instance[0] = instance; // last change for thread safety
-        cluster->slabs = calloc(SLAB_ALLOC_COUNT, sizeof(struct packet_link_s));
-        if (cluster->slabs) {
-          //struct packet_link_s *oldfree = cluster->free;  // if adding to rather than initializing
-          cluster->free = next = cluster->slabs + 1;
-          for (i=2; i<SLAB_ALLOC_COUNT; i++) { // first used by slabs, last has free=NULL
-            next = next->free = next + 1;
-          }
-          //next->free = oldfree;
-        }
-      }
-      // otherwise, clean up and return NULL
-    }
-    pthread_mutex_unlock(&clusterMutex);
-  }
-
-  return instance;
-}
-
-static struct fusedPcapInstance_s *findInstance(void)
-{
-  struct fuse_context *context;
-  int i;
-
-  //this is read-only, no need to protect with a mutex
-  context = fuse_get_context();
-  for (i=0; i<MAX_CLUSTER_SIZE; i++)
-    if (fusedPcapInstances[i].pid == context->pid)
-      return &fusedPcapInstances[i];
-  return NULL;
-}
-
 static void clearInstance(struct fusedPcapInstance_s *instance)
 {
   int i;
@@ -649,6 +539,126 @@ static void clearInstance(struct fusedPcapInstance_s *instance)
       free(instance->shortPath);
   memset(instance, '\0', sizeof(struct fusedPcapInstance_s));
   pthread_mutex_unlock(&instanceMutex);
+}
+
+static struct fusedPcapInstance_s *populateInstance(const char *shortPath, struct fusedPcapConfig_s *config)
+{
+  struct fuse_context *context;
+  struct fusedPcapInstance_s *instance;
+  struct fusedPcapCluster_s *cluster;
+  struct packet_link_s *next;
+  int i;
+
+  cluster = NULL;
+  context = fuse_get_context();
+
+  //need to protect fusedPcapInstances array allocation with mutex
+  pthread_mutex_lock(&instanceMutex);
+  for (i=0; i<MAX_CLUSTER_SIZE; i++)
+    if (fusedPcapInstances[i].pid == 0)
+      break;
+  if (i == MAX_CLUSTER_SIZE)
+    return NULL;
+  instance = &fusedPcapInstances[i];
+  instance->pid = context->pid;
+  //once pid is non-zero, other threads will skip the entry, so release mutex while we finish
+  pthread_mutex_unlock(&instanceMutex);
+
+  if (fusedPcapGlobal.debug)
+    fprintf(stderr, "populating %p instance struct for %s [%d]\n", instance, shortPath, context->pid);
+
+  memcpy(&instance->config, config, sizeof(struct fusedPcapConfig_s));
+
+  instance->readOffset = 0ll;
+  instance->outputOffset = 0ll;
+  instance->endFile[0] = '\0';
+  instance->bits = 0;
+
+  if (config->clustersize == 1) {
+    if (instance->shortPath)
+      free(instance->shortPath);
+    //NOTE: if strdup fails, this is set to NULL; always verify before dereferencing
+    instance->shortPath = strdup(shortPath);
+  }
+
+  else {
+    pthread_mutex_lock(&clusterMutex);
+    for (i=0; i<MAX_NUM_CLUSTERS; i++) {
+      cluster = &fusedPcapClusters[i];
+      if (cluster->shortPath && strcmp(cluster->shortPath, shortPath) == 0 &&
+          memcmp(&cluster->config, config, sizeof(struct fusedPcapConfig_s)) == 0)
+        break; // found cluster that matches shortPath and config
+    }
+    if (i < MAX_NUM_CLUSTERS) {  // found a matching shortPath and config
+      cluster = &fusedPcapClusters[i];
+      for (i=0; i<config->clustersize; i++)
+        if (cluster->instance[i] == NULL)
+          break;
+      if (i < config->clustersize) {
+        if (fusedPcapGlobal.debug)
+          fprintf(stderr, "joining instance %p to cluster %p as member %d\n", instance, cluster, i);
+        instance->cluster = cluster;
+        instance->member = i;
+        instance->shortPath = cluster->shortPath;
+        cluster->instance[i] = instance; // last change for thread safety
+        if (i + 1 == config->clustersize)
+          cluster->fullyPopulated = 1;
+      }
+
+      else {
+        clearInstance(instance);
+        instance = NULL;
+      }
+
+    }
+    else {
+      for (i=0; i<MAX_NUM_CLUSTERS; i++)
+        if (fusedPcapClusters[i].shortPath == NULL)
+          break;
+      if (i < MAX_NUM_CLUSTERS) {  // found a free cluster offset
+        if (fusedPcapGlobal.debug)
+          fprintf(stderr, "populating new cluster for instance %p at %p as member 0\n", instance, cluster);
+        cluster = &fusedPcapClusters[0];
+        pthread_mutex_init(&cluster->readThreadMutex, NULL);
+        pthread_mutex_init(&cluster->queueHeadMutex, NULL);
+        instance->cluster = cluster;
+        instance->member = 0;
+        memcpy(&cluster->config, config, sizeof(struct fusedPcapConfig_s));
+        cluster->shortPath = strdup(shortPath);
+        instance->shortPath = cluster->shortPath;
+        cluster->instance[0] = instance; // last change for thread safety
+        cluster->slabs = calloc(SLAB_ALLOC_COUNT, sizeof(struct packet_link_s));
+        if (cluster->slabs) {
+          cluster->free = next = cluster->slabs + 1;
+          for (i=2; i<SLAB_ALLOC_COUNT; i++) { // first used by slabs, last has free=NULL
+            next = next->free = next + 1;
+          }
+        }
+      }
+
+      else {
+        clearInstance(instance);
+        instance = NULL;
+      }
+
+    }
+    pthread_mutex_unlock(&clusterMutex);
+  }
+
+  return instance;
+}
+
+static struct fusedPcapInstance_s *findInstance(void)
+{
+  struct fuse_context *context;
+  int i;
+
+  //this is read-only, no need to protect with a mutex
+  context = fuse_get_context();
+  for (i=0; i<MAX_CLUSTER_SIZE; i++)
+    if (fusedPcapInstances[i].pid == context->pid)
+      return &fusedPcapInstances[i];
+  return NULL;
 }
 
 static inline void setInstance(struct fuse_file_info *fileInfo, struct fusedPcapInstance_s *instance)
