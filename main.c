@@ -780,10 +780,14 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
 
   stData->st_mode = stData->st_mode & ~(S_IWUSR | S_IWGRP | S_IWOTH);
   if (S_ISREG(stData->st_mode))
-    //TODO: if (half-assed guess that file is a pcap?)
+  if (endFile) {
+    if (endFile[0]) {
+      //TODO: compute sum (less extra headers) of files between filename and endFile
+      stData->st_size *= 4;
+    }
+    else
       stData->st_size = fileConfig.filesize;
-  //TODO: if (endFile)
-    //stData->st_size = computeFilesize(mountPath, endFile);
+  }
 
   return 0;
 }
