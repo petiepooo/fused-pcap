@@ -700,8 +700,7 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
 
   if (parsePath(path, &fileConfig, &mountPath, &filename, &specialFile, &endFile))
     return -ENOENT;
-  //if (fusedPcapGlobal.debug && path != mountPath)
-  if (fusedPcapGlobal.debug)
+  if (fusedPcapGlobal.debug && path != mountPath)
     printConfigStruct(&fileConfig);
 
   if (mountPath == NULL || specialFile) {
@@ -803,8 +802,7 @@ static int fused_pcap_opendir(const char *path, struct fuse_file_info *fileInfo)
 
   if (parsePath(path, &config, &mountPath, NULL, NULL, NULL))
     return -ENOENT;
-  //if (fusedPcapGlobal.debug && mountPath != path)
-  if (fusedPcapGlobal.debug)
+  if (fusedPcapGlobal.debug && path != mountPath)
     printConfigStruct(&config);
 
   dirInfo = malloc(sizeof(struct fusedPcapDirectory_s));
@@ -1057,8 +1055,7 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
     return -ENOENT;
   if (mountPath == NULL || filename == NULL)
     return -ENOENT;
-  //if (fusedPcapGlobal.debug && path != mountPath)
-  if (fusedPcapGlobal.debug)
+  if (fusedPcapGlobal.debug && path != mountPath)
     printConfigStruct(&fileConfig);
 
   if (specialFile) {
@@ -1066,7 +1063,6 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
     if (!residual)
       return -EMFILE;
 
-    // TODO: protect with mutex?
     pthread_mutex_lock(&residualMutex);
     if (residual->pathPrefix)
       free(residual->pathPrefix);
@@ -1130,13 +1126,7 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
       if (residual->pid[i] == 0)
         break;
     if (i < MAX_CLUSTER_SIZE) {
-      if (fusedPcapGlobal.debug)
-        fprintf(stderr, "adding pid to residual %p pid array index %d\n", residual, i);
-      if (fusedPcapGlobal.debug)
-        fprintf(stderr, "first two in pid array: %d %d\n", residual->pid[0], residual->pid[1]);
       residual->pid[i] = context->pid;
-      if (fusedPcapGlobal.debug)
-        fprintf(stderr, "first two in pid array: %d %d\n", residual->pid[0], residual->pid[1]);
     }
     if (residual->thisFile) {
       if (residual->lastFile)
@@ -1655,8 +1645,7 @@ static int fused_pcap_access(const char *path, int mode)
 
   if (parsePath(path, &fileConfig, &mountPath, &filename, &specialFile, &endFile))
     return -ENOENT;
-  //if (fusedPcapGlobal.debug && path != mountPath)
-  if (fusedPcapGlobal.debug)
+  if (fusedPcapGlobal.debug && path != mountPath)
     printConfigStruct(&fileConfig);
 
   if (specialFile) {
