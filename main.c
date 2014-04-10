@@ -1321,11 +1321,16 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster)
       if (cluster->instance[i])
         link = cluster->instance[i]->queue;
       pthread_mutex_unlock(&clusterMutex);
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "link: %p, oldest: %p, read: %p, end: %p\n", link ? link->offset : NULL, buf->oldest, buf->read, buf->end);
       if (link) {
-        if ((buf->oldest < buf->read && buf->read < link->offset) ||
-           ((buf->oldest < buf->read || buf->read < link->offset) &&
-            link->offset < buf->oldest))
+        if ((buf->oldest <= buf->read && buf->read < link->offset) ||
+           ((buf->oldest <= buf->read || buf->read < link->offset) &&
+            link->offset < buf->oldest)) {
+          if (fusedPcapGlobal.debug)
+            fprintf(stderr, "updating oldest to %p\n", link->offset);
           buf->oldest = link->offset;
+        }
       }
     }
     //if (fusedPcapGlobal.debug)
@@ -1341,6 +1346,8 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster)
           buf->read = buf->begin + length;
         }
       }
+      else
+        buf->read = buf->begin;
     }
 
     //determine how many bytes are available
@@ -1348,6 +1355,8 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster)
       length = buf->oldest - buf->read;
     else
       length = buf->end - buf->read;
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "oldest: %p, read: %p, end: %p, length is %d\n", buf->oldest, buf->read, buf->end, length);
 
     //optimize reads to page boundaries; only read lengths that are multiples of pagesize
     length &= ~(fusedPcapGlobal.pageSize - 1);
@@ -1356,7 +1365,6 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster)
       //TODO: try to read
       if (fusedPcapGlobal.debug)
         fprintf(stderr, "fillClusterBuffer reading %d bytes to %p\n", length, buf->read);
-return 0;
       sizeRes = read(cluster->fd, buf->read, length);
       if (sizeRes == -1)
         (void)errno; //TODO: how do we raise this?
@@ -1370,14 +1378,20 @@ return 0;
             //swap in new file's fd
           //else
             //close new fd
+return 0;
           usleep(10000);
         continue;
       }
-      else
-        buf->read += sizeRes;
+      else {
         //TODO: other counters here?
+        buf->read += sizeRes;
+        if (fusedPcapGlobal.debug)
+          fprintf(stderr, "fillClusterBuffer read %d bytes\n", sizeRes);
+return 0;
+       }
     }
     else {
+return 1;
       usleep(10000);
       continue;
     }
