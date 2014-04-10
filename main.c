@@ -1418,20 +1418,44 @@ static struct packet_link_s *getFreeLink(struct fusedPcapCluster_s *cluster)
 static void parsePackets(struct fusedPcapCluster_s *cluster, struct packet_link_s *newlink[])
 {
   struct packet_link_s *link;
+  struct packet_link_s *tail;
   int i;
+  int size;
 
   //TODO: parse the packets, adding links to members' queues, allocating queue links as needed
-  //while (a complete packet is in the buffer) {
-    //determine which instance it should be sent to
-    //if (cluster->instance[x]) {
-      //grab a link from cluster->free
+  size = cluster->buf.read - cluster->buf.next;
+  if (size > 8)
+    size = 8;
+
+  while (size > 0) { //TODO:a complete packet is in the buffer)
+
+    //TODO: determine which instance it should be sent to
+    i = (unsigned long long)cluster->buf.next / 8 % cluster->config.clustersize;
+
+    if (cluster->instance[i]) {
       link = getFreeLink(cluster);
-      //populate it's fields
-link->next = link; //TODO: take this out! it leaks memory on each call
-(void)i;
-      //add it to newlink[x]
-    //}
-  //}
+      //TODO: populate it's fields
+      link->next = NULL;
+      link->size = size;
+      link->offset = cluster->buf.next;
+      cluster->buf.next += size;
+
+      if (fusedPcapGlobal.debug)
+        fprintf(stderr, "adding link with %d bytes at offset %p to member %d newlink array\n", link->size, link->offset, i);
+      if (newlink[i]) {
+        tail = newlink[i];
+        while (tail->next)
+          tail = tail->next;
+        tail->next = link;
+      }
+      else
+        newlink[i] = link;
+    }
+
+    size = cluster->buf.read - cluster->buf.next;
+    if (size > 8)
+      size = 8;
+  }
 }
 
 
