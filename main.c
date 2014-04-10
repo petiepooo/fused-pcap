@@ -256,7 +256,7 @@ static int convertValidateFilesize(struct fusedPcapConfig_s *config /*output*/, 
       char value[32];
       memset(value, '\0', 32);
       strncpy(value, input, strchr(input, '/') ? (strchr(input, '/') - input) & 31ll : 31);
-      fprintf(stderr, "FUSED_PCAP_OPT: filesize=%s (0x%016llx)\n", value, (long long int)config->filesize);
+      fprintf(stderr, "FUSED_PCAP_OPT: filesize=%s (0x%016zx)\n", value, config->filesize);
     }
   }
   return 0;
@@ -1280,7 +1280,7 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster)
       }
       pthread_mutex_unlock(&clusterMutex);
       if (fusedPcapGlobal.debug)
-        fprintf(stderr, "cluster member %d received link %p\n", i, link);
+        fprintf(stderr, "cluster member %d received header link of %d bytes at offset %p\n", i, link->size, link->offset);
     }
     buf->next = buf->begin + 40;
   }
@@ -1444,12 +1444,11 @@ static int fillClusterQueues(struct fusedPcapInstance_s *instance)
   struct fusedPcapCluster_s *cluster;
   int clustersize;
   int i;
+  int count;
 
   // assert: we hold read Mutex, can modify cluster lists and instance lists other than the first link  
   cluster = instance->cluster;
 
-  if (fusedPcapGlobal.debug)
-    fprintf(stderr, "--->>> instance %p cluster %p in fillClusterQueues\n", instance, cluster);
   if ((i = fillClusterBuffer(cluster)) != 0)
     return i;
 
@@ -1466,12 +1465,15 @@ static int fillClusterQueues(struct fusedPcapInstance_s *instance)
 
     // move any free links (except the first) from the instance to the cluster
     freehead = NULL;
+    count = 0;
     if (cluster->instance[i])
       freehead = cluster->instance[i]->free;
     if (freehead) {
       lastfree = freehead->free;
-      while (lastfree && lastfree->free)
+      while (lastfree && lastfree->free) {
         lastfree = lastfree->free;
+        count++;
+      }
       if (lastfree) { // move links between freehead->free and lastfree to beginning of cluster free list
         lastfree->free = cluster->free;
         cluster->free = freehead->free;
@@ -1482,7 +1484,7 @@ static int fillClusterQueues(struct fusedPcapInstance_s *instance)
     // initialize the array of new links to be added
     newlink[i] = NULL;
     if (fusedPcapGlobal.debug)
-      fprintf(stderr, "cluster %p instance %d lastlink %p freehead %p\n", cluster, i, lastlink[i], freehead);
+      fprintf(stderr, "cluster %p instance %d lastlink %p freehead %p (freed %d links)\n", cluster, i, lastlink[i], freehead, count);
   }
 
   parsePackets(cluster, newlink);
@@ -1497,7 +1499,7 @@ static int fillClusterQueues(struct fusedPcapInstance_s *instance)
       }
       pthread_mutex_unlock(&cluster->queueHeadMutex);
       if (fusedPcapGlobal.debug)
-        fprintf(stderr, "cluster member %d: newlink: %p\n", i, newlink[i]);
+        fprintf(stderr, "cluster member %d: adding newlink %p to end of chain\n", i, newlink[i]);
     }
   }
   return 0;
@@ -1506,8 +1508,10 @@ static int fillClusterQueues(struct fusedPcapInstance_s *instance)
 static int readClusteredFile(char *buffer, size_t size, off_t offset, struct fusedPcapInstance_s *instance)
 {
   int clustersize;
+  int count;
   int i;
 
+  count = 0;
   clustersize = instance->config.clustersize;
 
   if (fusedPcapGlobal.debug && instance->cluster && ! instance->cluster->fullyPopulated)
@@ -1516,12 +1520,14 @@ static int readClusteredFile(char *buffer, size_t size, off_t offset, struct fus
     if (instance->nonblocking)
       return -EAGAIN;
     usleep(10000);
+    count++;
     if (fuse_interrupted() || instance->abortErr)
       return -EINTR;
   }
-  if (fusedPcapGlobal.debug)
-    fprintf(stderr, "instance %p, fullyPopulated flag detected, proceeding with read\n", instance);
+  if (fusedPcapGlobal.debug && count)
+    fprintf(stderr, "instance %p, fullyPopulated flag detected, proceeding with read after %d checks\n", instance, count);
 
+  count = 0;
   do {
     pthread_mutex_lock(&clusterMutex);
     for (i=0; i<clustersize; i++) {
@@ -1538,13 +1544,14 @@ static int readClusteredFile(char *buffer, size_t size, off_t offset, struct fus
     if (instance->nonblocking)
       return -EAGAIN;
     usleep(1000000);
+    count++;
     if (fuse_interrupted() || instance->abortErr)
       return -EINTR;
     if (fusedPcapGlobal.debug)
       fprintf(stderr, ".");
   } while (1);
-  if (fusedPcapGlobal.debug)
-    fprintf(stderr, "\ninstance %p of cluster %p continuing after oldest check\n", instance, instance->cluster);
+  if (fusedPcapGlobal.debug && count)
+    fprintf(stderr, "instance %p of cluster %p continuing after %d checks for oldest read\n", instance, instance->cluster, count);
 
   if (instance->queue == NULL) {
 
@@ -1559,20 +1566,22 @@ static int readClusteredFile(char *buffer, size_t size, off_t offset, struct fus
       return i;
   }
 
-  if (fusedPcapGlobal.debug)
-    fprintf(stderr, "instance %p, queue %p, queue size %d\n", instance, instance->queue, instance->queue ? instance->queue->size : -1);
-
   // if we still have no blocks, must be at EOF
   if (instance->queue == NULL)
     return 0;
 
+
   if (size < instance->queue->size) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "instance %p, link address %p, sending %zu bytes from offset %p (partial packet)\n", instance, instance->queue, size, instance->queue->offset);
     memcpy(buffer, instance->queue->offset, size);
     instance->queue->size -= size;
     instance->queue->offset += size;
     return size;
   }
 
+  if (fusedPcapGlobal.debug)
+    fprintf(stderr, "instance %p, link address %p, sending %d bytes from offset %p\n", instance, instance->queue, instance->queue->size, instance->queue->offset);
   memcpy(buffer, instance->queue->offset, instance->queue->size);
   pthread_mutex_lock(&instance->cluster->queueHeadMutex);
   instance->queue->free = instance->free;
@@ -1589,7 +1598,7 @@ static int readSingleFile(char *buffer, size_t size, off_t offset, struct fusedP
   struct fusedPcapResidual_s *residual;
 
   if (fusedPcapGlobal.debug)
-    fprintf(stderr, "read from offset %lli on fd %d\n", (long long int) offset, instance->fd);
+    fprintf(stderr, "read from offset %zu on fd %d\n", offset, instance->fd);
   //offRes = lseek(instance->fd, offset, SEEK_SET);
   //if (offRes != offset)
     //return -errno;
@@ -1598,7 +1607,7 @@ static int readSingleFile(char *buffer, size_t size, off_t offset, struct fusedP
   if (sizeRes == -1)
     return -errno;
   if (fusedPcapGlobal.debug)
-    fprintf(stderr, "read returned %lli\n", (long long int) sizeRes);
+    fprintf(stderr, "read returned %zu\n", sizeRes);
 
   instance->readOffset += sizeRes;
   instance->outputOffset += sizeRes;
@@ -1673,8 +1682,6 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
   instance = getInstance(fileInfo);
   if (instance == NULL)
     return -EBADF;  // fuse fd passed between pids, or process forked? look up based on name and offset?
-  if (fusedPcapGlobal.debug)
-    fprintf(stderr, "getInstance returned %p\n", instance);
   //if (fileEntry->readOffset != offset)
     //EINVAL? offset not suitably aligned
 
