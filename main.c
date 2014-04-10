@@ -210,12 +210,12 @@ static void printConfigStruct(struct fusedPcapConfig_s *config)
 static int convertValidateFilesize(struct fusedPcapConfig_s *config /*output*/, const char *input)
 {
   const char *suffix;
+  off_t multiplier;
 
   if (input == NULL)
     config->filesize = DEFAULT_PCAP_FILESIZE;
-  else {
-    off_t multiplier;
 
+  else {
     suffix = input;
     while (isdigit(suffix[0]))
       suffix++;
@@ -249,7 +249,7 @@ static int convertValidateFilesize(struct fusedPcapConfig_s *config /*output*/, 
       break;
     }
 
-    config->filesize = atoll(input) * multiplier;
+    config->filesize = multiplier * atoll(input);
     if (config->filesize < multiplier)
       return 1;
     if (fusedPcapGlobal.debug) {
