@@ -1258,7 +1258,7 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster)
     sizeRes = read(cluster->fd, buf->read, fusedPcapGlobal.pageSize);
     if (sizeRes == -1)
       return -errno;
-    //if (sizeRes < 40)
+    //if (sizeRes < 24)
       //return -EINVAL;
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "%d bytes read to address %p\n", sizeRes, buf->read);
@@ -1272,7 +1272,7 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster)
       cluster->free = link->free;
       memset(link, '\0', sizeof(struct packet_link_s));
       link->offset = buf->begin;
-      link->size = 40;
+      link->size = 24;
       pthread_mutex_lock(&clusterMutex);
       if (cluster->instance[i]) {
         //assert(cluster->instance[i]->queue == NULL);
@@ -1282,7 +1282,7 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster)
       if (fusedPcapGlobal.debug)
         fprintf(stderr, "cluster member %d received header link of %d bytes at offset %p\n", i, link->size, link->offset);
     }
-    buf->next = buf->begin + 40;
+    buf->next = buf->begin + 24;
   }
 
   // pointers into clusterBuffer:
