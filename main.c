@@ -1232,7 +1232,7 @@ static int isWholePacket(char *start, char *end)
   return 0;
 }
 
-static int fillClusterBuffer(struct fusedPcapCluster_s *cluster)
+static int fillClusterBuffer(struct fusedPcapCluster_s *cluster, int readSize)
 {
   int i;
   int length;
@@ -1261,10 +1261,15 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster)
     //if (sizeRes < 24)
       //return -EINVAL;
     if (fusedPcapGlobal.debug)
-      fprintf(stderr, "%d bytes read to address %p\n", sizeRes, buf->read);
+      fprintf(stderr, "%d bytes read to address %p, magic number: %x\n", sizeRes, buf->read, *((unsigned *)buf->begin));
     buf->read = buf->begin + sizeRes;
 
     //TODO: verify it's a pcap
+    if (((unsigned *)buf->begin)[0] != 0xa1b2c3d4)  // microsec resolution
+      if (((unsigned *)buf->begin)[0] != 0xa1b23c4d) // nanosec resolution
+        return -EIO;
+    if (((unsigned *)buf->begin)[1] != 0x00040002)  // version 2.4
+      return -EIO;
 
     //add a link to each cluster member to copy the header
     for (i=0; i<cluster->config.clustersize; i++) {
@@ -1358,8 +1363,11 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster)
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "oldest: %p, read: %p, end: %p, length is %d\n", buf->oldest, buf->read, buf->end, length);
 
-    //optimize reads to page boundaries; only read lengths that are multiples of pagesize
-    length &= ~(fusedPcapGlobal.pageSize - 1);
+    //only read lengths that are multiples of pagesize and less or equal to what client requested
+    if (length > readSize)
+      length = readSize;
+    else
+      length &= ~(fusedPcapGlobal.pageSize - 1);
 
     if (length > 0) {
       //TODO: try to read
@@ -1437,11 +1445,12 @@ static void parsePackets(struct fusedPcapCluster_s *cluster, struct packet_link_
   int size;
 
   //TODO: parse the packets, adding links to members' queues, allocating queue links as needed
-  size = cluster->buf.read - cluster->buf.next;
-  if (size > 8)
-    size = 8;
+  //size = cluster->buf.read - cluster->buf.next;
+  size = ((unsigned *)cluster->buf.next)[2];
+  size += 16;
+  //TODO:  WARNING!!! buffer overrun here if .next is too close to .end...
 
-  while (size > 0) { //TODO:a complete packet is in the buffer)
+  while (size <= cluster->buf.read - cluster->buf.next) {
 
     //TODO: determine which instance it should be sent to
     i = (unsigned long long)cluster->buf.next / 8 % cluster->config.clustersize;
@@ -1452,7 +1461,6 @@ static void parsePackets(struct fusedPcapCluster_s *cluster, struct packet_link_
       link->next = NULL;
       link->size = size;
       link->offset = cluster->buf.next;
-      cluster->buf.next += size;
 
       if (fusedPcapGlobal.debug)
         fprintf(stderr, "adding link with %d bytes at offset %p to member %d newlink array\n", link->size, link->offset, i);
@@ -1466,14 +1474,14 @@ static void parsePackets(struct fusedPcapCluster_s *cluster, struct packet_link_
         newlink[i] = link;
     }
 
-    size = cluster->buf.read - cluster->buf.next;
-    if (size > 8)
-      size = 8;
+    (cluster->buf.next) += size;
+    size = ((unsigned *)cluster->buf.next)[2]; 
+    size += 16;
   }
 }
 
 
-static int fillClusterQueues(struct fusedPcapInstance_s *instance)
+static int fillClusterQueues(struct fusedPcapInstance_s *instance, int readSize)
 {
   struct packet_link_s *lastlink[MAX_CLUSTER_SIZE];
   struct packet_link_s *newlink[MAX_CLUSTER_SIZE];
@@ -1487,7 +1495,7 @@ static int fillClusterQueues(struct fusedPcapInstance_s *instance)
   // assert: we hold read Mutex, can modify cluster lists and instance lists other than the first link  
   cluster = instance->cluster;
 
-  if ((i = fillClusterBuffer(cluster)) != 0)
+  if ((i = fillClusterBuffer(cluster, readSize)) != 0)
     return i;
 
   clustersize = instance->config.clustersize;
@@ -1596,7 +1604,7 @@ static int readClusteredFile(char *buffer, size_t size, off_t offset, struct fus
     pthread_mutex_lock(&instance->cluster->readThreadMutex);
 
     if (instance->queue == NULL) // recheck as we may have gotten more blocks while waiting
-      i = fillClusterQueues(instance);
+      i = fillClusterQueues(instance, size);
 
     //we got some blocks while we were waiting; release and continue
     pthread_mutex_unlock(&instance->cluster->readThreadMutex);
