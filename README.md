@@ -18,21 +18,21 @@ This is a file-system abstraction layer that concatenates sequential pcap files 
 
 Access is read-only by default.  Read-write support may be added if a valid use case surfaces.
 
-The directory containing the pcap files to concatenate is specified during mount creation.  If possible, pcaps can also be located within subdirectories of the mountpoint.
+The directory containing the pcap files to concatenate is specified during mount creation.  Pcaps can also be located within subdirectories of the mountpoint.
 
-The pcap file to start with is specified when calling open().
+Opening pcap files takes the format startfile[..[endfile]]  If no double-dot separator is specified, a single file is processed until EOF.
 
-The pcap file to end with is optionally specified when calling open().  The format for that is "actualstartfile..actualendfile" as the filename.  Tab completion doesn't seem to be possible for the range format, as the shell itterates through the directory without giving fuse any indication of what's been typed so far.
+If a double-dot separator is specified, processing starts on startfile and continues until an error occurs or an end file is specified by writing to the special "..end" file in the same directory.  Whenever a new file appears, presence and content of the virtual ..end file is checked to know whether to end processing then.  If the ..end file has a process id suffix, eg: /mnt/pcap/..end.1234, it only triggers an EOF for that specific process.  This allows several processes to use the same mountpoint (with clustersize==1).  This should not be used on clustersize>1.
 
-If start and end files are both specified at open time, actual filesize can be computed and returned by fstat().  If clustersize > 1, it may be larger than what is actually read before EOF is sent.
+If both starting and ending files are specified separated by the double-dot, the two files, along with any pertinent files chronologically between the two, are concatenated.  Pcap file headers are skipped on all files except the first.
 
-The ending file can also be specified by writing to a virtual file, eg: $echo \* > /mnt/pcap/..end to stop at the next EOF.  This file is checked whenever a new file is poised to be concatenated.
+Tab completion doesn't seem to be possible when using the double-dot format, as the shell iterates through the directory without giving fuse any indication of what's been typed so far.
 
-If the ..end file has a process id suffix, eg: /mnt/pcap/..end.1234, it only triggers an EOF for that specific process.  This allows several processes to use the same mountpoint (with clustersize==1).  This should not be used on clustersize>1.
+If starting and ending files are both specified at open time, actual filesize can be computed and returned by fstat().  If clustersize > 1, it may be larger than what is actually read before EOF is sent.
 
 When ..end is present, the ending file has been processed, and EOF(s) has been sent, the last fully processed file's name will be available at /mnt/pcap/..last.  The next file that would be processed is at /mnt/pcap/..next. If a pid suffix is specified on ..end, it will be present for ..last and ..next as well, eg: /mnt/pcap/..end.1234.
 
-If one process in a cluster ends prematurely, it would normally block all others.  If this is detected (the fd is closed), one of five actions can be taken depending on the clusterabend option setting: 
+If one process in a cluster ends prematurely, it would normally block all others, as the blocks written would fall behind those being read.  If this is detected (the fd is closed), one of five actions can be taken depending on the clusterabend option setting: 
 
 1. The remaining members continue to receive packets until the end of the current file, at which time they receive an EOF.  ..abend is created containing the pid(s) that closed early.  ..last and ..next contain the file names specified above.
 2. The remaining members continue to receive packets until the end of the current file, at which time they receive an EINVAL error.  Special files are created as above
@@ -46,7 +46,7 @@ For clustersize>1, reads are performed by the cluster member that first tries to
 
 Packet queues are implemented as linked lists of links carved from a slab of memory.  Links are removed from the head as they're sent to the reading processes, and added to the tail by the parsing cluster member.  Removals are done in a thread-safe manner by the owning member.  The only time mutex protection is needed is when the final link is removed and the head pointer is set to NULL.  The parsing member needs to acquire a mutex on each addition, so will grab the mutex the whole time it's adding links.  This also ensures there are not two members reading and parsing the same portion of the input file.
 
-As a member pulls links off its head, it adds them to the free list head.  This list uses a second next-link pointer so as not to disturb the pointer that the parsing member may be accessing.  The parsing member, on reaching tail, can reap blocks from this list starting with block #2, leaving he first one with the reading member.
+As a member pulls links off its head, it adds them to the free list head.  This list uses a second next-link pointer so as not to disturb the pointer that the parsing member may be accessing.  The parsing member, on reaching tail, can reap blocks from this list starting with block #2, leaving he first one with the reading member so that it can move blocks from queue to free without a mutex.
 
 ###Options:
 
@@ -57,10 +57,10 @@ Mount-time options use the usual -o method, eg: mount.pcap /storage/pcap/eth0 /m
 open() and mount-time options include:
 
 * clustersize=X - block reads until X processes have connected to and read from the same file (default 1).
-* blockslack=X - number of blocks to allow between leading and lagging reads in a cluster (default TBD).
-* filesize=X - size of file returned in fstat() call, K, M, G, T, and P suffixes allowed (default 512T).
-* clusterabend=X - how to handle premature closure of cluster member's read handle (0=err, 1=eof, 2=ignore) (default=0).
-* clustermode=X - how to distribute packets between cluster members (0=vlan+ip+port, 1=vlan, 2=ip, 3=vlan+ip, 4=ip+port) (default=0).
+* blockslack=X - number of blocks to allow between leading and lagging reads in a cluster (default 2048).
+* filesize=X - size of file returned in fstat() call, K, M, G, T, and P suffixes allowed (default 2048P).
+* clusterabend=X - how to handle premature closure of cluster member's read handle (1=eof-on-eof, 2=err-on-eof, 3=immed-eof, 4=immed-err, 5=ignore) (default=1).
+* clustermode=X - how to distribute packets between cluster members (1=vlan, 2=ip, 3=vlan+ip, 4=ip+port, 5=vlan+ip+port) (default=5).
 * keepcache - enables fuse keepcache option
 * filematch=STR - filters display of files to those contining STR as a substring within their name (STR cannot contain a comma or slash).
 
