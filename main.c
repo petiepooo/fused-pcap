@@ -635,7 +635,7 @@ static struct fusedPcapInstance_s *populateInstance(const char *shortPath, struc
         if (fusedPcapClusters[i].shortPath == NULL)
           break;
       if (i < MAX_NUM_CLUSTERS) {  // found a free cluster offset
-        cluster = &fusedPcapClusters[0];
+        cluster = &fusedPcapClusters[i];
         if (fusedPcapGlobal.debug)
           fprintf(stderr, "populating new cluster for instance %p at %p as member 0\n", instance, cluster);
         pthread_mutex_init(&cluster->readThreadMutex, NULL);
