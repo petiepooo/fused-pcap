@@ -147,6 +147,7 @@ static struct fusedPcapResidual_s {
   char *lastFile;
   char *thisFile;
   char *nextFile;
+  char *endFile;
   char *abendPid;
   char *pathPrefix;
   char *mountPath;
@@ -335,6 +336,7 @@ static struct {
   { "..blockslack=",   convertValidateBlockslack },
   { "..keepcache",     convertValidateKeepcache },
 };
+static int numOptionDirs = 6;
 
 static char *specialFiles[] = {
   "..status",
@@ -343,7 +345,9 @@ static char *specialFiles[] = {
   "..current",
   "..next",
   "..pids",
+  "..end",
 };
+static int numSpecialFiles = 7;
 
 static int parsePath(const char *path, struct fusedPcapConfig_s *config, const char **mountPath, const char **filename, const char **specialFile, const char **endFile)
 {
@@ -385,7 +389,7 @@ static int parsePath(const char *path, struct fusedPcapConfig_s *config, const c
 
   do {
     //for (i=0; i<sizeof(optionDirs); i++) {
-    for (i=0; i<6; i++) {
+    for (i=0; i<numOptionDirs; i++) {
       if (strncmp(optionDirs[i].string, delimiter + 1, strlen(optionDirs[i].string)) == 0) {
         if (config && optionDirs[i].function(config, delimiter + strlen(optionDirs[i].string) + 1) != 0)
           return 1;
@@ -393,7 +397,7 @@ static int parsePath(const char *path, struct fusedPcapConfig_s *config, const c
         break;
       }
     }
-  } while (delimiter && i < 6);
+  } while (delimiter && i < numOptionDirs);
 
   if (delimiter == NULL)
      return 0;
@@ -407,7 +411,7 @@ static int parsePath(const char *path, struct fusedPcapConfig_s *config, const c
     return 0;
  
   if (specialFile) {
-    for (i=0; i<6; i++) {
+    for (i=0; i<numSpecialFiles; i++) {
       if (strcmp(specialFiles[i], delimiter + 1) == 0) {
         *specialFile = delimiter;
         return 0;
@@ -763,6 +767,10 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
         return 0;
       if (residual->pid[0] && strcmp(specialFile, "/..pids") == 0)
         return 0;
+      if (residual->endFile && strcmp(specialFile, "/..end") == 0) {
+        stData->st_size = strlen(residual->endFile);
+        return 0;
+      }
     }
     else {
       if (fusedPcapGlobal.debug)
@@ -888,7 +896,7 @@ static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t fi
     status.st_mode = entry->d_type << 12;
 
     if (fusedPcapGlobal.debug)
-      fprintf(stderr, "sending %s to filler callback\n", entry->d_name);
+      fprintf(stderr, "sending file %s to filler callback\n", entry->d_name);
     if (filler(buffer, entry->d_name, &status, 0))
       break;
   }
@@ -934,6 +942,12 @@ static int fused_pcap_readdir(const char *path, void *buffer, fuse_fill_dir_t fi
   }
   if (dirInfo->residual->pid[0]) {
     snprintf(fillerPath, PATH_MAX, "..pids");
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "sending %s to filler callback\n", fillerPath);
+    filler(buffer, fillerPath,  &status, 0);
+  }
+  if (dirInfo->residual->endFile) {
+    snprintf(fillerPath, PATH_MAX, "..end");
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "sending %s to filler callback\n", fillerPath);
     filler(buffer, fillerPath,  &status, 0);
@@ -989,9 +1003,32 @@ static int fused_pcap_releasedir(const char *path, struct fuse_file_info *fileIn
 
 static int fused_pcap_create(const char *path, mode_t mode, struct fuse_file_info *fileInfo)
 {
-  (void)path;
+  struct fusedPcapConfig_s fileConfig;
+  struct fusedPcapResidual_s *residual;
+  const char *specialFile;
+  const char *mountPath;
+
   (void)mode;
-  (void)fileInfo;
+ 
+  if (parsePath(path, &fileConfig, &mountPath, NULL, &specialFile, NULL))
+    return -ENOENT;
+
+  if (specialFile && strcmp(specialFile, "/..end") == 0) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "attempt to create allowed special file %s\n", specialFile);
+    //TODO:
+
+    residual = getResidual(&fileConfig, mountPath);
+    if (!residual)
+      return -EMFILE;
+
+    if (! residual->endFile)
+      residual->endFile = strdup("");
+    //if fh is a small number, it's the index into residual, and it's path is the filename
+    fileInfo->fh = getResidualIndex(residual);
+    return 0;
+  }
+
   return -EROFS;
 }
 
@@ -1012,8 +1049,25 @@ static int fused_pcap_mkdir(const char *path, mode_t mode)
 
 static int fused_pcap_unlink(const char *path)
 {
-  (void)path;
-  return -EROFS;
+  struct fusedPcapConfig_s fileConfig;
+  const char *mountPath;
+  const char *specialFile;
+  struct fusedPcapResidual_s *residual;
+
+  if (parsePath(path, &fileConfig, &mountPath, NULL, &specialFile, NULL))
+    return -ENOENT;
+
+  if (! specialFile || strcmp(specialFile, "/..end") != 0)
+    return -EROFS;
+
+  residual = getResidual(&fileConfig, mountPath);
+  if (residual) {
+    if (residual->endFile)
+      free(residual->endFile);
+    residual->endFile = NULL;
+    return 0;
+  }
+  return -EINVAL;
 }
 
 static int fused_pcap_rmdir(const char *path)
@@ -1060,9 +1114,28 @@ static int fused_pcap_chown(const char *path, uid_t uid, gid_t gid)
 
 static int fused_pcap_truncate(const char *path, off_t size)
 {
-  (void)path;
-  (void)size;
-  return -EROFS;
+  struct fusedPcapConfig_s fileConfig;
+  const char *mountPath;
+  const char *specialFile;
+  struct fusedPcapResidual_s *residual;
+
+  if (size != 0)
+    return -EFBIG;
+
+  if (parsePath(path, &fileConfig, &mountPath, NULL, &specialFile, NULL))
+    return -ENOENT;
+
+  if (! specialFile || strcmp(specialFile, "/..end") != 0)
+    return -EROFS;
+
+  residual = getResidual(&fileConfig, mountPath);
+  if (residual) {
+    if (residual->endFile)
+      free(residual->endFile);
+    residual->endFile = strdup("");
+    return 0;
+  }
+  return -EIO;
 }
 
 static int fused_pcap_utimens(const char *path, const struct timespec timeSpec[2])
@@ -1089,12 +1162,6 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   
   fd = -1;
 
-  if (fileInfo->flags & (O_CREAT | O_WRONLY)) {
-    if (fusedPcapGlobal.debug)
-      fprintf(stderr, "open detected O_CREAT or O_WRONLY flags in %x, returning EROFS\n", fileInfo->flags);
-    return -EROFS;
-  }
-
   if (parsePath(path, &fileConfig, &mountPath, &filename, &specialFile, &endFile))
     return -ENOENT;
   if (mountPath == NULL || filename == NULL)
@@ -1102,18 +1169,20 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   if (fusedPcapGlobal.debug && path != mountPath)
     printConfigStruct(&fileConfig);
 
+  if (fileInfo->flags & (O_CREAT | O_WRONLY) && (specialFile == NULL || strcmp(specialFile, "/..end") != 0)) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "open detected O_CREAT or O_WRONLY flags in %x, returning EROFS\n", fileInfo->flags);
+    return -EROFS;
+  }
+
   if (specialFile) {
+    if (fusedPcapGlobal.debug)
+      fprintf(stderr, "attempt to open special file %s\n", specialFile);
+    //TODO:
+
     residual = getResidual(&fileConfig, mountPath);
     if (!residual)
       return -EMFILE;
-
-    pthread_mutex_lock(&residualMutex);
-    if (residual->pathPrefix)
-      free(residual->pathPrefix);
-    residual->pathPrefix = strndup(mountPath, filename - mountPath + 1);
-    if (residual->pathPrefix)
-      residual->pathPrefix[filename - mountPath + 1] = '\0';
-    pthread_mutex_unlock(&residualMutex);
 
     //if fh is a small number, it's the index into residual, and it's path is the filename
     fileInfo->fh = getResidualIndex(residual);
@@ -1189,13 +1258,17 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   return 0;
 }
 
-static int readSpecialFile(char *buffer, size_t size, struct fusedPcapResidual_s *residual)
+static int readSpecialFile(char *buffer, size_t size, off_t offset, struct fusedPcapResidual_s *residual)
 {
   int i;
   int len;
 
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "residual at %p, mountPath is %s\n", residual, residual->mountPath);
+
+  if (offset)
+    return 0;
+
   if (residual->mountPath && strcmp(residual->mountPath, "/..status") == 0) {
     strncpy(buffer, "********** This is my special wonder-file ...\n", size); //TODO
     //snprintf(buffer, size, "%s\n"%s\n",
@@ -1222,6 +1295,9 @@ static int readSpecialFile(char *buffer, size_t size, struct fusedPcapResidual_s
     }
     return strlen(buffer);
   }
+  if (residual->mountPath && strcmp(residual->mountPath, "/..end") == 0)
+    if (residual->endFile && residual->endFile[0])
+      return snprintf(buffer, size, "%s\n", residual->endFile);
   if (fusedPcapGlobal.debug)
     fprintf(stderr, "failed to match!  lastFile: %s  thisFile: %s  nextFile: %s\n", residual->lastFile, residual->thisFile, residual->nextFile);
   return -EACCES;
@@ -1788,7 +1864,7 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
   (void)path;  // should not use if flag_nopath is set
 
   if (fileInfo->fh < SPECIAL_FILE_COUNT)
-    return readSpecialFile(buffer, size, &fusedPcapResidual[fileInfo->fh]);
+    return readSpecialFile(buffer, size, offset, &fusedPcapResidual[fileInfo->fh]);
 
   instance = getInstance(fileInfo);
   if (instance == NULL)
@@ -1818,12 +1894,25 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
 
 static int fused_pcap_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fileInfo)
 {
+  struct fusedPcapResidual_s *residual;
+
   (void)path;  // should not use if flag_nopath is set
   (void)buffer;
-  (void)size;
-  (void)offset;
-  (void)fileInfo;
-  return -EROFS;
+
+  if (fileInfo->fh >= SPECIAL_FILE_COUNT)
+    return -EROFS;
+  if (offset > 0)
+    return -EINVAL;
+  if (size >= PATH_MAX)
+    return -EFBIG;
+
+  residual = &fusedPcapResidual[fileInfo->fh];
+  if (residual->endFile)
+    free(residual->endFile);
+  residual->endFile = strndup(buffer, size);
+  if (fusedPcapGlobal.debug)
+    fprintf(stderr, "wrote endFile of %s\n", residual->endFile);
+  return size;
 }
 
 static int fused_pcap_statfs(const char *path, struct statvfs *status)
@@ -1919,6 +2008,8 @@ static int fused_pcap_fsync(const char *path, int dummy, struct fuse_file_info *
   (void)path;  // should not use if flag_nopath is set
   (void)dummy;
   (void)fileInfo;
+  if (fileInfo->fh < SPECIAL_FILE_COUNT)
+    return 0;
   return -EROFS;
 }
 
@@ -1938,10 +2029,9 @@ static int fused_pcap_access(const char *path, int mode)
     printConfigStruct(&fileConfig);
 
   if (specialFile) {
-    //return the file's stData
+    //TODO: anthing else we need to do here?
+    return 0;
   }
-  //if (isInCache(path)
-    //return the cached stData
 
   snprintf(accessPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, mountPath);
   if (endFile) {
