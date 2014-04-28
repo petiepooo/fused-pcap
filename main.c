@@ -769,6 +769,7 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
         return 0;
       if (residual->endFile && strcmp(specialFile, "/..end") == 0) {
         stData->st_size = strlen(residual->endFile);
+        stData->st_mode = S_IFREG | S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
         return 0;
       }
     }
