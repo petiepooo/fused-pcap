@@ -130,7 +130,7 @@ static struct fusedPcapCluster_s {
   struct packet_link_s *free;
   struct packet_link_s *slabs;
   pthread_mutex_t readThreadMutex;  // blocking
-  pthread_mutex_t queueHeadMutex;   // non-blocking
+  pthread_spinlock_t queueHeadSpin;   // non-blocking
   struct clusterBuffer_s buf;
   struct fusedPcapConfig_s config;
   int fd;
@@ -524,7 +524,7 @@ static int closeInstance(struct fusedPcapInstance_s *instance)
       if (cluster->shortPath)
         free(cluster->shortPath);
       pthread_mutex_destroy(&cluster->readThreadMutex);
-      pthread_mutex_destroy(&cluster->queueHeadMutex);
+      pthread_spin_destroy(&cluster->queueHeadSpin);
       if (fusedPcapGlobal.debug) {
         head = cluster->free;
         i = 0;
@@ -638,7 +638,7 @@ static struct fusedPcapInstance_s *populateInstance(const char *shortPath, struc
         if (fusedPcapGlobal.debug)
           fprintf(stderr, "instance %p - populating new cluster at %p as member 0\n", instance, cluster);
         pthread_mutex_init(&cluster->readThreadMutex, NULL);
-        pthread_mutex_init(&cluster->queueHeadMutex, NULL);
+        pthread_spin_init(&cluster->queueHeadSpin, 0);
         instance->cluster = cluster;
         instance->member = 0;
         memcpy(&cluster->config, config, sizeof(struct fusedPcapConfig_s));
@@ -1664,13 +1664,13 @@ static int fillClusterQueues(struct fusedPcapInstance_s *instance, int readSize)
 
     for (i=0; i<clustersize; i++) {
       if (newlink[i] && cluster->instance[i]) {
-        pthread_mutex_lock(&cluster->queueHeadMutex);
+        pthread_spin_lock(&cluster->queueHeadSpin);
         if (lastlink[i] && cluster->instance[i]->queue)
           lastlink[i]->next = newlink[i];
         else {
           cluster->instance[i]->queue = newlink[i];
         }
-        pthread_mutex_unlock(&cluster->queueHeadMutex);
+        pthread_spin_unlock(&cluster->queueHeadSpin);
         if (fusedPcapGlobal.debug)
           fprintf(stderr, "fillClusterQueue - cluster member %d: adding newlink %p to end of chain\n", i, newlink[i]);
       }
@@ -1780,11 +1780,11 @@ static int readClusteredFile(char *buffer, size_t size, off_t offset, struct fus
     fprintf(stderr, "instance %p - link address %p, sending %d bytes from offset %p\n", instance, instance->queue, instance->queue->size, instance->queue->offset);
   memcpy(buffer, instance->queue->offset, instance->queue->size);
   //TODO: make this mutex per instance instead of per cluster
-  pthread_mutex_lock(&instance->cluster->queueHeadMutex);
+  pthread_spin_lock(&instance->cluster->queueHeadSpin);
   instance->queue->free = instance->free;
   instance->free = instance->queue;
   instance->queue = instance->queue->next;
-  pthread_mutex_unlock(&instance->cluster->queueHeadMutex);
+  pthread_spin_unlock(&instance->cluster->queueHeadSpin);
 
   return instance->free->size;
 }
