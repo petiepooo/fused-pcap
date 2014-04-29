@@ -1435,7 +1435,7 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster, int readSize)
     else
       length = buf->end - buf->read;
     if (fusedPcapGlobal.debug)
-      fprintf(stderr, "fillClusterBuffer - oldest: %p, read: %p, end: %p, length is %d\n", buf->oldest, buf->read, buf->end, length);
+      fprintf(stderr, "fillClusterBuffer - available length before adjustment is %d\n", length);
 
     //only read lengths that are multiples of pagesize and less or equal to what client requested
     if (length > readSize)
