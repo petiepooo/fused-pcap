@@ -484,6 +484,7 @@ static int closeInstance(struct fusedPcapInstance_s *instance)
 {
   int i;
   struct fusedPcapResidual_s *residual;
+  struct fusedPcapCluster_s *cluster;
   struct packet_link_s *slab;
   struct packet_link_s *head;
   int ret;
@@ -507,31 +508,25 @@ static int closeInstance(struct fusedPcapInstance_s *instance)
   if (instance->readFile)
     free(instance->readFile);
   if (instance->config.clustersize > 1 && instance->cluster) {
+    cluster = instance->cluster;
     pthread_mutex_lock(&clusterMutex);
     if (fusedPcapGlobal.debug)
-      fprintf(stderr, "instance %p - removing from cluster %p member %d\n", instance, instance->cluster, instance->member);
-    if (fusedPcapGlobal.debug) {
-      head = instance->free;
-      i = 0;
-      while (head) {
-        i++;
-        head = head->free;
-      }
-      fprintf(stderr, "instance %p - %d free links lost until cluster slabs are freed\n", instance, i);
-    }
-    instance->cluster->instance[instance->member] = NULL;
+      fprintf(stderr, "instance %p - removing from cluster %p member %d\n", instance, cluster, instance->member);
+    cluster->instance[instance->member] = NULL;
     for (i=0; i<instance->config.clustersize; i++)
-      if (instance->cluster->instance[i])
+      if (cluster->instance[i])
         break;
     if (i >= instance->config.clustersize) {
       if (fusedPcapGlobal.debug)
         fprintf(stderr, "instance %p - last instance removed, clearing cluster too\n", instance);
-      if (instance->cluster->fd)
-        ret = close(instance->cluster->fd);
-      if (instance->cluster->shortPath)
-        free(instance->cluster->shortPath);
+      if (cluster->fd)
+        ret = close(cluster->fd);
+      if (cluster->shortPath)
+        free(cluster->shortPath);
+      pthread_mutex_destroy(&cluster->readThreadMutex);
+      pthread_mutex_destroy(&cluster->queueHeadMutex);
       if (fusedPcapGlobal.debug) {
-        head = instance->cluster->free;
+        head = cluster->free;
         i = 0;
         while (head) {
           i++;
@@ -539,7 +534,7 @@ static int closeInstance(struct fusedPcapInstance_s *instance)
         }
         fprintf(stderr, "instance %p - %d free links in cluster free list\n", instance, i);
       }
-      slab = instance->cluster->slabs;
+      slab = cluster->slabs;
       i = 0;
       while (slab) {
         i++;
@@ -549,7 +544,7 @@ static int closeInstance(struct fusedPcapInstance_s *instance)
       }
       if (fusedPcapGlobal.debug)
         fprintf(stderr, "instance %p - %d memory slabs freed from cluster\n", instance, i);
-      memset(instance->cluster, '\0', sizeof(struct fusedPcapCluster_s));
+      memset(cluster, '\0', sizeof(struct fusedPcapCluster_s));
     }
     pthread_mutex_unlock(&clusterMutex);
   }
