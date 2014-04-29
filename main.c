@@ -83,7 +83,7 @@ enum {
   CLUSTER_ABEND_IMMEDIATE_ERROR_ALL,
   CLUSTER_ABEND_IGNORE
 };
-#define DEFAULT_CLUSTER_ABEND CLUSTER_ABEND_EOF_ALL_AT_EOF
+#define DEFAULT_CLUSTER_ABEND CLUSTER_ABEND_IMMEDIATE_EOF_ALL
 
 // GLOBAL STRUCTURES
 
@@ -772,6 +772,7 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
         stData->st_mode = S_IFREG | S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
         return 0;
       }
+      return -ENOENT;
     }
     else {
       if (fusedPcapGlobal.debug)
@@ -779,7 +780,6 @@ static int fused_pcap_getattr(const char *path, struct stat *stData)
       stData->st_mode = S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR | S_IXGRP | S_IXOTH;
       return 0;
     }
-    return -ENOENT;
   }
 
   snprintf(statPath, PATH_MAX, "%s%s", fusedPcapGlobal.pcapDirectory, mountPath);
@@ -1136,7 +1136,7 @@ static int fused_pcap_truncate(const char *path, off_t size)
     residual->endFile = strdup("");
     return 0;
   }
-  return -EIO;
+  return -EINVAL;
 }
 
 static int fused_pcap_utimens(const char *path, const struct timespec timeSpec[2])
@@ -1196,7 +1196,7 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "open call detected ending file, truncating openPath at offset %d\n", length);
     if (length > PATH_MAX)
-      return -EINVAL;
+      return -ENAMETOOLONG;
     openPath[length] = '\0';
   }
 
@@ -1216,7 +1216,7 @@ static int fused_pcap_open(const char *path, struct fuse_file_info *fileInfo)
   instance = populateInstance(mountPath, &fileConfig);
   if (!instance) {
     close(fd);
-    return -EMFILE;
+    return -ENOMEM;
   }
 
   if (stat(openPath, &instance->stData) == -1) {
@@ -1340,7 +1340,7 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster, int readSize)
     if ((((unsigned *)buf->begin)[0] != 0xa1b2c3d4 && ((unsigned *)buf->begin)[0] != 0xa1b23c4d) || ((unsigned *)buf->begin)[1] != 0x00040002) {
       free(buf->begin);
       buf->begin = NULL;
-      return -EIO;
+      return -EINVAL;
     }
 
     //add a link to each cluster member to copy the header
@@ -1450,8 +1450,9 @@ static int fillClusterBuffer(struct fusedPcapCluster_s *cluster, int readSize)
       fprintf(stderr, "fillClusterBuffer - reading %d bytes to %p\n", length, buf->read);
     sizeRes = read(cluster->fd, buf->read, length);
     if (sizeRes == -1)
-      (void)errno; //TODO: how do we raise this?
-    // if at EOF, try again later
+      return -errno;
+
+    // if at EOF, determine what to do
     if (sizeRes == 0) {
       pthread_mutex_lock(&clusterMutex);
         for (i=0; i<cluster->config.clustersize; i++) {
@@ -1652,9 +1653,10 @@ static int fillClusterQueues(struct fusedPcapInstance_s *instance, int readSize)
     if (instance->nonblocking)
       return -EAGAIN;
     usleep(10000);
-    count++;
-    if (fuse_interrupted() || instance->abortErr)
+    if (fuse_interrupted())
       return -EINTR;
+    if (instance->abortErr)
+      return -EIO;
 
   } while (1);
 }
@@ -1677,8 +1679,10 @@ static int readClusteredFile(char *buffer, size_t size, off_t offset, struct fus
       return -EAGAIN;
     usleep(10000);
     count++;
-    if (fuse_interrupted() || instance->abortErr)
+    if (fuse_interrupted())
       return -EINTR;
+    if (instance->abortErr)
+      return -EIO;
   }
   if (fusedPcapGlobal.debug && count)
     fprintf(stderr, "instance %p - fullyPopulated flag detected, proceeding with read after %d checks\n", instance, count);
@@ -1732,7 +1736,7 @@ static int readClusteredFile(char *buffer, size_t size, off_t offset, struct fus
       fprintf(stderr, "instance %p - cluster %p grabbing read mutex (timeout %zd.%ld)\n", instance, instance->cluster, timeSpec.tv_sec, timeSpec.tv_nsec);
     while (pthread_mutex_timedlock(&instance->cluster->readThreadMutex, &timeSpec) == ETIMEDOUT) {
       if (fuse_interrupted())
-        return 0;
+        return -EINTR;
       if (instance->queue != NULL) { // recheck as we may have gotten more blocks while waiting
         if (fusedPcapGlobal.debug)
           fprintf(stderr, "instance %p - cluster %p breaking out without read mutex after try %d, queue points to %p\n", instance, instance->cluster, count, instance->queue);
@@ -1833,7 +1837,7 @@ static int readSingleFile(char *buffer, size_t size, off_t offset, struct fusedP
         else if (instance->fileEndErr) {
           if (fusedPcapGlobal.debug)
             fprintf(stderr, "read call (single) - aborting cluster member %d at EOF before next read\n", instance->clusterMember);
-          return -EINVAL;
+          return -EIO;
         }
         else {
           if (fusedPcapGlobal.debug)
@@ -1860,7 +1864,7 @@ static int readSingleFile(char *buffer, size_t size, off_t offset, struct fusedP
 
       else if (0) { //TODO: (! non-blocking)
         //block until more available (or just wait a few and retry) //TODO: figure out how to determine more is available
-        // return -EINTR
+        // return -EIO;
       }
     } while (0);//TODO: sizeRes == 0);
   }
@@ -1889,13 +1893,13 @@ static int fused_pcap_read(const char *path, char *buffer, size_t size, off_t of
       fprintf(stderr, "read call - aborting cluster member %d before read with EOF\n", instance->clusterMember);
     instance->config.filesize = instance->readOffset;
     instance->normalEnding = 1;
-    return 0;
+    return -EOF;
   }
   if (instance->abortErr) {
     if (fusedPcapGlobal.debug)
       fprintf(stderr, "read call - aborting cluster member %d before read with ENOENT\n", instance->clusterMember);
     instance->normalEnding = 1;
-    return -ENOENT;  //is this the right error?
+    return -EIO;
   }
 
   if (instance->config.clustersize > 1)
