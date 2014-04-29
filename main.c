@@ -656,6 +656,8 @@ static struct fusedPcapInstance_s *populateInstance(const char *shortPath, struc
           for (i=2; i<SLAB_ALLOC_COUNT; i++) { // first used by slabs, last has free=NULL
             next = next->free = next + 1;
           }
+          if (fusedPcapGlobal.debug)
+            fprintf(stderr, "instance %p - new slab at %p\n", instance, cluster->slabs);
         }
       }
 
