@@ -1712,29 +1712,45 @@ static int readClusteredFile(char *buffer, size_t size, off_t offset, struct fus
   earlyBreak = 0;
   while (instance->queue == NULL) {
 
+    if (clock_gettime(CLOCK_REALTIME, &timeSpec) == -1)
+      if (fusedPcapGlobal.debug && count)
+        fprintf(stderr, "instance %p - cluster %p clock_gettime() returned %d\n", instance, instance->cluster, errno);
+    //if (fusedPcapGlobal.debug)
+      //fprintf(stderr, "instance %p - cluster %p clock_gettime gave %ld.%ld)\n", instance, instance->cluster, timeSpec.tv_sec, timeSpec.tv_nsec);
+
+    //if ((timeSpec.tv_nsec = timeSpec.tv_nsec + 5000000l) >= 1000000000l) {
+      //timeSpec.tv_nsec = timeSpec.tv_nsec - 1000000000l;
+      //timeSpec.tv_sec = timeSpec.tv_sec + 1l;
+    //}
+    if ((timeSpec.tv_nsec += 5000000ll) >= 1000000000ll) {
+      timeSpec.tv_nsec -= 1000000000l;
+      timeSpec.tv_sec += 1l;
+    }
+    count = 1;
+
     if (fusedPcapGlobal.debug)
-      fprintf(stderr, "instance %p - cluster %p grabbing read mutex\n", instance, instance->cluster);
-    timeSpec.tv_sec = 0ll;
-    timeSpec.tv_nsec = 500000000;
+      fprintf(stderr, "instance %p - cluster %p grabbing read mutex (timeout %zd.%ld)\n", instance, instance->cluster, timeSpec.tv_sec, timeSpec.tv_nsec);
     while (pthread_mutex_timedlock(&instance->cluster->readThreadMutex, &timeSpec) == ETIMEDOUT) {
       if (fuse_interrupted())
         return 0;
       if (instance->queue != NULL) { // recheck as we may have gotten more blocks while waiting
         if (fusedPcapGlobal.debug)
-          fprintf(stderr, "instance %p - cluster %p breaking out without read mutex, queue points to %p\n", instance, instance->cluster, instance->queue);
+          fprintf(stderr, "instance %p - cluster %p breaking out without read mutex after try %d, queue points to %p\n", instance, instance->cluster, count, instance->queue);
         earlyBreak++;
         break;
       }
-      if (fusedPcapGlobal.debug)
-        fprintf(stderr, "instance %p - cluster %p still waiting on read mutex\n", instance, instance->cluster);
-      //timeSpec.tv_sec = 0;
-      //timeSpec.tv_nsec = 100000000;
+
+      if ((timeSpec.tv_nsec += 10000000ll) >= 1000000000ll) {
+        timeSpec.tv_nsec -= 1000000000ll;
+        timeSpec.tv_sec += 1l;
+      }
+      count++;
     }
     if (earlyBreak)
       break;
 
     if (fusedPcapGlobal.debug)
-      fprintf(stderr, "instance %p - cluster %p grabbed read mutex, queue points to %p\n", instance, instance->cluster, instance->queue);
+      fprintf(stderr, "instance %p - cluster %p grabbed read mutex on try %d, queue points to %p\n", instance, instance->cluster, count, instance->queue);
     if (instance->queue == NULL) // recheck as we may have gotten more blocks while waiting
       i = fillClusterQueues(instance, size);
 
